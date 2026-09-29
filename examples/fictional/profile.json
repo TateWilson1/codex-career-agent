@@ -1,0 +1,27 @@
+{
+  "name": "Jordan Rivera",
+  "email": "jordan.rivera@example.test",
+  "phone": "555-010-2040",
+  "links": ["https://example.test/jordan"],
+  "target_roles": ["Security Analyst"],
+  "locations": ["Remote", "Pittsburgh"],
+  "work_authorization": "Authorized to work in the United States",
+  "skills": ["Python", "SIEM", "Incident response", "SQL"],
+  "preferences": {"remote": true, "minimum_salary": 70000},
+  "experience": [
+    {
+      "company": "Northwind Community Lab",
+      "title": "Security Operations Intern",
+      "dates": "May 2025 - August 2025",
+      "bullets": [
+        "Triaged 120 simulated security alerts and documented escalation decisions.",
+        "Built a Python script that reduced weekly log review time by 30%."
+      ]
+    }
+  ],
+  "education": [
+    {"degree": "BS Cybersecurity", "school": "Example State University", "dates": "Expected 2027"}
+  ],
+  "certifications": ["CompTIA Security+"]
+}
+

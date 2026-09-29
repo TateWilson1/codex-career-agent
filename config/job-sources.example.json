@@ -1,0 +1,19 @@
+{
+  "job_sources": [
+    {
+      "provider": "greenhouse",
+      "account": "example-board-token",
+      "company": "Example Company"
+    },
+    {
+      "provider": "lever",
+      "account": "example-site-name",
+      "company": "Example Company"
+    },
+    {
+      "provider": "smartrecruiters",
+      "account": "example-company-identifier",
+      "company": "Example Company"
+    }
+  ]
+}

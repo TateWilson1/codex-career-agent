@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><title>Synthetic ATS</title>
+  <style>.step[hidden]{display:none} label{display:block;margin:.5rem 0}</style>
+</head>
+<body>
+  <main>
+    <h1>Fictional application</h1>
+    <form id="application">
+      <section class="step" data-step="1">
+        <label>Name <input name="name" required></label>
+        <label>Email <input name="email" type="email" required></label>
+        <label>Location <select name="location"><option>Remote</option><option>Pittsburgh</option></select></label>
+        <label><input name="work_authorized" type="radio" value="yes"> Authorized</label>
+        <button type="button" data-next="2">Continue</button>
+      </section>
+      <section class="step" data-step="2" hidden>
+        <label>Education <textarea name="education" required></textarea></label>
+        <label>Employment <textarea name="employment"></textarea></label>
+        <label>Resume <input name="resume" type="file" required></label>
+        <label>Cover letter <input name="cover_letter" type="file"></label>
+        <button type="button" data-next="3">Continue</button>
+      </section>
+      <section class="step" data-step="3" hidden>
+        <label>Screening answer <textarea name="screening"></textarea></label>
+        <label>Unsupported disclosure <textarea name="unsupported" data-classification="USER_REQUIRED"></textarea></label>
+        <label><input name="attestation" type="checkbox" required data-classification="USER_REQUIRED"> Legal attestation</label>
+        <button type="submit" disabled>Submit application</button>
+      </section>
+    </form>
+    <output id="confirmation" hidden>Application received</output>
+  </main>
+  <script>
+    document.querySelectorAll('[data-next]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.step').forEach(step => { step.hidden = step.dataset.step !== button.dataset.next; });
+    }));
+    window.authorizeSyntheticApplication = token => {
+      const approved = token === 'SYNTHETIC_APPROVED';
+      document.querySelector('[type=submit]').disabled = !approved;
+      return approved;
+    };
+    document.querySelector('form').addEventListener('submit', event => {
+      event.preventDefault();
+      if (event.submitter.disabled || !event.currentTarget.reportValidity()) return;
+      const confirmation = document.querySelector('#confirmation');
+      confirmation.hidden = false;
+      confirmation.textContent = 'Application received SYNTHETIC-001';
+    });
+  </script>
+</body>
+</html>

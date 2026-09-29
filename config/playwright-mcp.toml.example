@@ -1,0 +1,6 @@
+# Copy this block into ~/.codex/config.toml, then run `codex mcp list`.
+# Node.js 20+ is required. The browser is downloaded automatically on first use.
+[mcp_servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
+

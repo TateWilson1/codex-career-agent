@@ -1,0 +1,19 @@
+[
+  {
+    "external_id": "example-001",
+    "company": "Contoso Defense",
+    "title": "Junior Security Analyst",
+    "location": "Remote - United States",
+    "url": "https://jobs.example.test/contoso/001",
+    "description": "Monitor SIEM alerts, support incident response, document findings, and use Python or SQL for analysis."
+  },
+  {
+    "external_id": "example-001-duplicate",
+    "company": "Contoso Defense",
+    "title": "Junior Security Analyst",
+    "location": "Remote - United States",
+    "url": "https://jobs.example.test/contoso/001?source=board",
+    "description": "Monitor SIEM alerts and support incident response."
+  }
+]
+

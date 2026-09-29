@@ -1,0 +1,8 @@
+{
+  "fields": [
+    {"label": "Full name", "type": "text", "answer_key": "name"},
+    {"label": "Email", "type": "text", "answer_key": "email"},
+    {"label": "Resume", "type": "file", "answer_key": "resume_path"}
+  ]
+}
+

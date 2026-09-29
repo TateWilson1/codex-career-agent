@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111923">
+  <meta name="career-token" content="__CAREER_TOKEN__">
+  <title>Codex Career</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">CC</span>
+        <span><strong>Codex Career</strong><small>Private command center</small></span>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item is-active" data-view="dashboard">Today</button>
+        <button class="nav-item" data-view="jobs">Job desk</button>
+        <button class="nav-item" data-view="sources">Sources & scoring</button>
+        <button class="nav-item" data-view="applications">Applications</button>
+        <button class="nav-item" data-view="resume">Resume studio</button>
+        <button class="nav-item" data-view="activity">Activity</button>
+      </nav>
+      <div class="connection" id="connection-card" aria-live="polite">
+        <span class="status-dot"></span>
+        <div><strong>Checking Codex…</strong><small>Subscription connection</small></div>
+      </div>
+      <p class="privacy-note">Runs on this computer. Candidate data stays in the ignored private-data directory.</p>
+    </aside>
+
+    <main id="workspace" class="workspace" tabindex="-1">
+      <header class="topbar">
+        <div>
+          <p class="section-code" id="section-code">CAREER / TODAY</p>
+          <h1 id="page-title">Today’s career queue</h1>
+        </div>
+        <div class="top-actions">
+          <button class="button button-secondary" data-prompt="Review my career profile and base resume facts. Show any missing, stale, or unverified information before changing anything.">Review profile</button>
+          <button class="button button-primary" data-prompt="Find current jobs that match my verified profile and preferences. Import and deduplicate strong options, evaluate them, and show me the best matches.">Find jobs</button>
+        </div>
+      </header>
+
+      <div id="loading" class="loading" role="status">Loading your private career workspace…</div>
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+      <section id="view-dashboard" class="view is-active" aria-labelledby="page-title">
+        <div id="dashboard-content"></div>
+      </section>
+      <section id="view-jobs" class="view" aria-labelledby="page-title">
+        <div class="toolbar">
+          <label class="search-field">Search saved jobs
+            <input id="job-search" type="search" placeholder="Company, title, or location…" autocomplete="off">
+          </label>
+          <label>Status
+            <select id="job-status-filter">
+              <option value="">All statuses</option>
+              <option value="discovered">Discovered</option>
+              <option value="interested">Interested</option>
+              <option value="applying">Applying</option>
+              <option value="applied">Applied</option>
+              <option value="interviewing">Interviewing</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+        </div>
+        <div id="jobs-content"></div>
+      </section>
+      <section id="view-sources" class="view" aria-labelledby="page-title">
+        <div id="sources-content"></div>
+      </section>
+      <section id="view-applications" class="view" aria-labelledby="page-title">
+        <div id="applications-content"></div>
+      </section>
+      <section id="view-resume" class="view" aria-labelledby="page-title">
+        <div id="resume-content"></div>
+      </section>
+      <section id="view-activity" class="view" aria-labelledby="page-title">
+        <div id="activity-content"></div>
+      </section>
+    </main>
+
+    <aside class="agent-panel" aria-label="Codex career assistant">
+      <div class="agent-heading">
+        <div><p class="section-code">CODEX</p><h2>Career agent</h2></div>
+        <span id="run-state" class="run-state">Ready</span>
+      </div>
+      <div class="agent-intro">
+        <p>Tell Codex what outcome you want. It will operate the local career engine and return here with the result.</p>
+      </div>
+      <div id="agent-result" class="agent-result" aria-live="polite">
+        <p class="muted">Try “prepare the strongest saved job” or “show what needs follow-up this week.”</p>
+      </div>
+      <form id="agent-form" class="agent-form">
+        <label for="agent-prompt">What should Codex do?</label>
+        <textarea id="agent-prompt" name="prompt" rows="5" maxlength="8000" placeholder="Describe the outcome…"></textarea>
+        <div class="prompt-chips" aria-label="Suggested requests">
+          <button type="button" data-fill-prompt="Prepare my strongest saved job, but stop before any application is submitted.">Prepare best match</button>
+          <button type="button" data-fill-prompt="Review my application pipeline and tell me the single most important next action.">Next action</button>
+          <button type="button" data-fill-prompt="Help me improve my base resume using only verified facts. Show every proposed change for approval before saving it.">Improve resume</button>
+        </div>
+        <button id="send-button" class="button button-primary button-block" type="submit">Run with Codex</button>
+      </form>
+    </aside>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "summary": "Security analyst with verified SIEM, incident response, Python, and SQL experience.",
+  "selected_evidence": ["f0c97261de4252f8"],
+  "bullet_rewrites": [
+    {
+      "evidence_id": "f0c97261de4252f8",
+      "text": "Triaged 120 simulated security alerts and documented escalation decisions."
+    }
+  ],
+  "cover_letter": "I am applying for the Junior Security Analyst role at Contoso Defense. My verified experience includes triaging simulated security alerts, documenting escalation decisions, and using Python to improve log review. I would welcome the opportunity to discuss how that experience can support your security operations team."
+}
+

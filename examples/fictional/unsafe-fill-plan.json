@@ -1,0 +1,8 @@
+{
+  "fields": [
+    {"label": "Full name", "type": "text", "answer_key": "name"},
+    {"label": "Verification code", "type": "mfa", "answer_key": "mfa_code"},
+    {"label": "Desired salary", "type": "salary", "answer_key": "salary"}
+  ]
+}
+

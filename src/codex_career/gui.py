@@ -1,0 +1,402 @@
+from __future__ import annotations
+
+import json
+import mimetypes
+import os
+import secrets
+import shutil
+import subprocess
+import threading
+import uuid
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
+
+from .db import Database
+from .boards import board_registry
+from .jobs import JOB_STATUSES, update_status
+from .profile import load_profile
+
+
+STATIC_ROOT = Path(__file__).with_name("web")
+PROMPT_PREFIX = """You are operating Codex Career from its local visual command center.
+Complete the user's request end to end using the repository's AGENTS.md and internal job-agent tools.
+Keep candidate claims grounded in verified evidence. Preserve immutable document and application history.
+Never submit an application without explicit approval for that exact application after showing the final audit.
+Do not ask the user to run internal CLI commands; return a concise, human-readable result for the GUI.
+
+User request:
+"""
+
+
+def _loads(value: str | None, fallback: Any) -> Any:
+    try:
+        return json.loads(value or "")
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+
+
+def career_goal(profile: dict[str, Any] | None) -> str:
+    if not profile:
+        return "Build a verified profile, then begin a focused search."
+    goals = profile.get("preferences", {}).get("career_goals")
+    if isinstance(goals, str) and goals.strip():
+        return goals.strip()
+    if isinstance(goals, dict):
+        for key in ("next_two_to_three_years", "short_term", "long_term"):
+            value = goals.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    roles = profile.get("target_roles") or []
+    return f"Land a {roles[0]} role using verified experience." if roles else "Build a focused career search."
+
+
+def dashboard_state(db: Database) -> dict[str, Any]:
+    try:
+        profile = load_profile(db)
+    except ValueError:
+        profile = None
+    with db.connect() as connection:
+        counts = {
+            "jobs": connection.execute("SELECT COUNT(*) FROM jobs WHERE status!='archived'").fetchone()[0],
+            "interested": connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('interested','applying')"
+            ).fetchone()[0],
+            "applications": connection.execute("SELECT COUNT(*) FROM applications").fetchone()[0],
+            "interviews": connection.execute(
+                "SELECT COUNT(*) FROM interviews WHERE status='scheduled'"
+            ).fetchone()[0],
+        }
+        jobs = [dict(row) for row in connection.execute(
+            "SELECT id,public_id,company,title,location,location_type,employment_type,status,score,url,"
+            "description,posting_date,created_at,score_json,updated_at FROM jobs "
+            "ORDER BY CASE WHEN status='archived' THEN 1 ELSE 0 END,score DESC,updated_at DESC LIMIT 100"
+        )]
+        search_runs = [dict(row) for row in connection.execute(
+            "SELECT source,result_count,finished_at FROM search_runs ORDER BY id DESC LIMIT 20"
+        )]
+        applications = [dict(row) for row in connection.execute(
+            "SELECT a.id,a.public_id,a.status,a.submitted_at,a.next_action,a.updated_at,j.company,j.title,"
+            "m.id AS material_id,m.version AS material_version,m.status AS material_status "
+            "FROM applications a JOIN jobs j ON j.id=a.job_id "
+            "LEFT JOIN material_sets m ON m.id=a.material_set_id ORDER BY a.updated_at DESC"
+        )]
+        materials = [dict(row) for row in connection.execute(
+            "SELECT m.id,m.public_id,m.version,m.status,m.tailoring_mode,m.created_at,m.manifest_json,"
+            "j.company,j.title FROM material_sets m JOIN jobs j ON j.id=m.job_id ORDER BY m.created_at DESC LIMIT 50"
+        )]
+        documents = [dict(row) for row in connection.execute(
+            "SELECT dv.id,d.kind,dv.path,dv.sha256,dv.created_at,j.company,j.title "
+            "FROM document_versions dv JOIN documents d ON d.id=dv.document_id "
+            "LEFT JOIN jobs j ON j.id=dv.job_id WHERE d.kind IN ('resume','cover_letter') "
+            "ORDER BY dv.created_at DESC LIMIT 100"
+        )]
+        automation = [dict(row) for row in connection.execute(
+            "SELECT r.id,r.public_id,r.state,r.started_at,r.finished_at,a.id AS application_id,j.company,j.title "
+            "FROM automation_runs r JOIN applications a ON a.id=r.application_id "
+            "JOIN jobs j ON j.id=a.job_id ORDER BY r.started_at DESC LIMIT 50"
+        )]
+        interviews = [dict(row) for row in connection.execute(
+            "SELECT i.id,i.stage,i.scheduled_at,i.status,i.notes,a.id AS application_id,j.company,j.title "
+            "FROM interviews i JOIN applications a ON a.id=i.application_id "
+            "JOIN jobs j ON j.id=a.job_id ORDER BY COALESCE(i.scheduled_at,i.created_at) DESC LIMIT 50"
+        )]
+        followups = [dict(row) for row in connection.execute(
+            "SELECT f.id,f.kind,f.due_at,f.status,f.content,a.id AS application_id,j.company,j.title "
+            "FROM followups f JOIN applications a ON a.id=f.application_id "
+            "JOIN jobs j ON j.id=a.job_id ORDER BY COALESCE(f.due_at,f.created_at) DESC LIMIT 50"
+        )]
+        events = [dict(row) for row in connection.execute(
+            "SELECT entity_type,entity_id,event_type,data_json,created_at FROM events ORDER BY id DESC LIMIT 30"
+        )]
+        profile_versions = [dict(row) for row in connection.execute(
+            "SELECT public_id,version,source_resume_name,reviewed_at,created_at "
+            "FROM profile_versions ORDER BY version DESC LIMIT 25"
+        )]
+        evidence_count = connection.execute("SELECT COUNT(*) FROM evidence WHERE verified=1").fetchone()[0]
+
+    for job in jobs:
+        job["evaluation"] = _loads(job.pop("score_json"), {})
+    for material in materials:
+        manifest = _loads(material.pop("manifest_json"), {})
+        material["files"] = manifest.get("files", [])
+        material["validation"] = manifest.get("validation", {})
+    for event in events:
+        event["data"] = _loads(event.pop("data_json"), {})
+    return {
+        "profile": profile,
+        "career_goal": career_goal(profile),
+        "profile_versions": profile_versions,
+        "verified_evidence_count": evidence_count,
+        "counts": counts,
+        "jobs": jobs,
+        "applications": applications,
+        "materials": materials,
+        "documents": documents,
+        "automation": automation,
+        "interviews": interviews,
+        "followups": followups,
+        "events": events,
+        "job_boards": board_registry(profile),
+        "search_runs": search_runs,
+    }
+
+
+def subscription_status(
+    execute: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    binary = shutil.which("codex")
+    if not binary:
+        return {"installed": False, "subscription_ready": False, "label": "Codex CLI not installed"}
+    try:
+        result = execute(
+            [binary, "login", "status"], capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {"installed": True, "subscription_ready": False, "label": f"Unable to check sign-in: {error}"}
+    detail = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    ready = result.returncode == 0 and "chatgpt" in detail.lower()
+    if ready:
+        label = "Connected through ChatGPT"
+    elif result.returncode == 0:
+        label = "Codex is not using ChatGPT sign-in"
+    else:
+        label = "Sign in with ChatGPT to connect Codex"
+    return {"installed": True, "subscription_ready": ready, "label": label, "detail": detail[:500]}
+
+
+class CodexRunner:
+    def __init__(self, root: Path):
+        self.root = root.resolve()
+        self.runs: dict[str, dict[str, Any]] = {}
+        self.lock = threading.Lock()
+
+    def status(self) -> dict[str, Any]:
+        return subscription_status()
+
+    def start_login(self) -> dict[str, str]:
+        binary = shutil.which("codex")
+        if not binary:
+            raise ValueError("Install the Codex CLI before connecting your ChatGPT plan")
+        flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+        subprocess.Popen([binary, "login"], cwd=self.root, creationflags=flags)
+        return {"state": "login_started", "instruction": "Finish Sign in with ChatGPT in the window that opened."}
+
+    def start(self, prompt: str) -> dict[str, Any]:
+        if not prompt.strip():
+            raise ValueError("Describe what you want Codex to do")
+        auth = self.status()
+        if not auth["subscription_ready"]:
+            raise PermissionError("Connect Codex using Sign in with ChatGPT first. API-key billing is intentionally disabled.")
+        with self.lock:
+            if any(run["state"] == "running" for run in self.runs.values()):
+                raise ValueError("Codex is already working on another request")
+            run_id = uuid.uuid4().hex
+            run = {"id": run_id, "state": "running", "prompt": prompt.strip(), "result": "", "events": []}
+            self.runs[run_id] = run
+        threading.Thread(target=self._execute, args=(run_id,), daemon=True).start()
+        return dict(run)
+
+    def get(self, run_id: str) -> dict[str, Any]:
+        with self.lock:
+            if run_id not in self.runs:
+                raise ValueError("Codex run not found")
+            return dict(self.runs[run_id])
+
+    def _execute(self, run_id: str) -> None:
+        binary = shutil.which("codex")
+        assert binary
+        with self.lock:
+            prompt = self.runs[run_id]["prompt"]
+        environment = os.environ.copy()
+        for key in ("OPENAI_API_KEY", "CODEX_API_KEY"):
+            environment.pop(key, None)
+        command = [
+            binary, "exec", "--json", "--sandbox", "workspace-write", "--approve-for-me",
+            "-C", str(self.root), PROMPT_PREFIX + prompt,
+        ]
+        messages: list[str] = []
+        try:
+            process = subprocess.Popen(
+                command, cwd=self.root, env=environment, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+            )
+            assert process.stdout
+            for raw in process.stdout:
+                line = raw.strip()
+                if not line:
+                    continue
+                event = _loads(line, {"type": "log", "text": line})
+                text = _event_text(event)
+                if text:
+                    messages.append(text)
+                with self.lock:
+                    self.runs[run_id]["events"] = (self.runs[run_id]["events"] + [event])[-80:]
+            return_code = process.wait()
+            result = messages[-1] if messages else "Codex finished without a text response. Refresh the dashboard to inspect changes."
+            with self.lock:
+                self.runs[run_id].update(state="complete" if return_code == 0 else "failed", result=result)
+        except OSError as error:
+            with self.lock:
+                self.runs[run_id].update(state="failed", result=f"Could not start Codex: {error}")
+
+
+def _event_text(event: Any) -> str:
+    if not isinstance(event, dict):
+        return ""
+    item = event.get("item")
+    if isinstance(item, dict) and item.get("type") in {"agent_message", "message"}:
+        return str(item.get("text") or item.get("content") or "").strip()
+    if event.get("type") in {"agent_message", "message"}:
+        return str(event.get("text") or event.get("content") or "").strip()
+    return ""
+
+
+class CareerServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], db: Database, root: Path, runner: CodexRunner):
+        super().__init__(address, CareerHandler)
+        self.db = db
+        self.root = root.resolve()
+        self.data_root = db.path.parent.resolve()
+        self.runner = runner
+        self.token = secrets.token_urlsafe(32)
+
+
+class CareerHandler(BaseHTTPRequestHandler):
+    server: CareerServer
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def _headers(self, status: int, content_type: str, length: int | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'")
+        if length is not None:
+            self.send_header("Content-Length", str(length))
+        self.end_headers()
+
+    def _json(self, value: Any, status: int = 200) -> None:
+        payload = json.dumps(value, default=str).encode()
+        self._headers(status, "application/json; charset=utf-8", len(payload))
+        self.wfile.write(payload)
+
+    def _authorized(self, query: dict[str, list[str]] | None = None) -> bool:
+        supplied = self.headers.get("X-Career-Token") or (query or {}).get("token", [""])[0]
+        return secrets.compare_digest(supplied, self.server.token)
+
+    def _body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 1_000_000:
+            raise ValueError("Request is too large")
+        value = json.loads(self.rfile.read(length) or b"{}")
+        if not isinstance(value, dict):
+            raise ValueError("Request body must be a JSON object")
+        return value
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        if parsed.path == "/":
+            text = (STATIC_ROOT / "index.html").read_text(encoding="utf-8").replace("__CAREER_TOKEN__", self.server.token)
+            payload = text.encode()
+            self._headers(200, "text/html; charset=utf-8", len(payload))
+            self.wfile.write(payload)
+            return
+        if parsed.path.startswith("/static/"):
+            name = parsed.path.removeprefix("/static/")
+            if "/" in name or "\\" in name or name.startswith("."):
+                self._json({"error": "Not found"}, 404)
+                return
+            path = STATIC_ROOT / name
+            if not path.is_file():
+                self._json({"error": "Not found"}, 404)
+                return
+            payload = path.read_bytes()
+            self._headers(200, mimetypes.guess_type(path.name)[0] or "application/octet-stream", len(payload))
+            self.wfile.write(payload)
+            return
+        if not self._authorized(query):
+            self._json({"error": "Unauthorized local request"}, 403)
+            return
+        try:
+            if parsed.path == "/api/state":
+                self._json(dashboard_state(self.server.db))
+            elif parsed.path == "/api/codex":
+                self._json(self.server.runner.status())
+            elif parsed.path.startswith("/api/runs/"):
+                self._json(self.server.runner.get(parsed.path.rsplit("/", 1)[-1]))
+            elif parsed.path.startswith("/api/documents/"):
+                self._document(int(parsed.path.rsplit("/", 1)[-1]), query)
+            else:
+                self._json({"error": "Not found"}, 404)
+        except (ValueError, PermissionError) as error:
+            self._json({"error": str(error)}, 400)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if not self._authorized():
+            self._json({"error": "Unauthorized local request"}, 403)
+            return
+        try:
+            body = self._body()
+            if parsed.path == "/api/runs":
+                prompt = str(body.get("prompt", "")).strip()
+                if len(prompt) > 8000:
+                    raise ValueError("Request must be 8,000 characters or fewer")
+                self._json(self.server.runner.start(prompt), 202)
+            elif parsed.path == "/api/codex/login":
+                self._json(self.server.runner.start_login(), 202)
+            elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/status"):
+                parts = parsed.path.strip("/").split("/")
+                status = str(body.get("status", ""))
+                if status not in JOB_STATUSES:
+                    raise ValueError("Unknown job status")
+                update_status(self.server.db, int(parts[2]), status)
+                self._json({"ok": True})
+            else:
+                self._json({"error": "Not found"}, 404)
+        except (ValueError, PermissionError, json.JSONDecodeError) as error:
+            self._json({"error": str(error)}, 400)
+
+    def _document(self, document_id: int, query: dict[str, list[str]]) -> None:
+        with self.server.db.connect() as connection:
+            row = connection.execute("SELECT path FROM document_versions WHERE id=?", (document_id,)).fetchone()
+        if not row:
+            raise ValueError("Document not found")
+        path = Path(row["path"]).resolve()
+        try:
+            path.relative_to(self.server.data_root)
+        except ValueError as error:
+            raise PermissionError("Document is outside the private data directory") from error
+        if not path.is_file():
+            raise ValueError("Document file is missing")
+        payload = path.read_bytes()
+        self._headers(200, mimetypes.guess_type(path.name)[0] or "application/octet-stream", len(payload))
+        self.wfile.write(payload)
+
+
+def make_server(db: Database, root: Path, port: int = 8765, runner: CodexRunner | None = None) -> CareerServer:
+    return CareerServer(("127.0.0.1", port), db, root, runner or CodexRunner(root))
+
+
+def serve(db: Database, root: Path, *, port: int = 8765, open_browser: bool = True) -> None:
+    server = make_server(db, root, port)
+    address = f"http://127.0.0.1:{server.server_port}/"
+    print(f"Codex Career is running at {address}")
+    print("Personal data stays local. Press Ctrl+C to stop.")
+    if open_browser:
+        threading.Timer(0.35, webbrowser.open, args=(address,)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nCodex Career stopped.")
+    finally:
+        server.server_close()
