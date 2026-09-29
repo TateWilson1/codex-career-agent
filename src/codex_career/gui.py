@@ -9,6 +9,7 @@ import subprocess
 import threading
 import uuid
 import webbrowser
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -16,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .db import Database
 from .boards import board_registry
-from .jobs import JOB_STATUSES, update_status
+from .jobs import JOB_STATUSES, scan_sources, update_status
 from .profile import load_profile
 
 
@@ -116,6 +117,12 @@ def dashboard_state(db: Database) -> dict[str, Any]:
             "FROM profile_versions ORDER BY version DESC LIMIT 25"
         )]
         evidence_count = connection.execute("SELECT COUNT(*) FROM evidence WHERE verified=1").fetchone()[0]
+        alert_rows = [dict(row) for row in connection.execute(
+            "SELECT id,company,title,location,location_type,score,url,posting_date,created_at,score_json "
+            "FROM jobs WHERE status!='archived' AND score>=65 AND created_at>=? "
+            "ORDER BY created_at DESC,score DESC LIMIT 20",
+            ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"),),
+        )]
 
     for job in jobs:
         job["evaluation"] = _loads(job.pop("score_json"), {})
@@ -125,6 +132,8 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         material["validation"] = manifest.get("validation", {})
     for event in events:
         event["data"] = _loads(event.pop("data_json"), {})
+    for alert in alert_rows:
+        alert["evaluation"] = _loads(alert.pop("score_json"), {})
     return {
         "profile": profile,
         "career_goal": career_goal(profile),
@@ -141,6 +150,7 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         "events": events,
         "job_boards": board_registry(profile),
         "search_runs": search_runs,
+        "fresh_alerts": alert_rows,
     }
 
 
@@ -243,6 +253,58 @@ class CodexRunner:
                 self.runs[run_id].update(state="failed", result=f"Could not start Codex: {error}")
 
 
+class JobWatcher:
+    def __init__(self, db: Database, interval_seconds: int = 300):
+        self.db = db
+        self.interval_seconds = max(60, interval_seconds)
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self._status: dict[str, Any] = {
+            "state": "idle", "last_scan_at": None, "next_scan_at": None,
+            "last_result": None, "error": None,
+        }
+
+    def status(self) -> dict[str, Any]:
+        with self.lock:
+            return {**self._status, "interval_seconds": self.interval_seconds}
+
+    def start(self) -> None:
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+
+    def trigger(self) -> dict[str, Any]:
+        with self.lock:
+            if self._status["state"] == "scanning":
+                return {**self._status, "interval_seconds": self.interval_seconds}
+            self._status.update(state="scanning", error=None, next_scan_at=None)
+        threading.Thread(target=self._scan, daemon=True).start()
+        return self.status()
+
+    def _loop(self) -> None:
+        self.trigger()
+        while not self.stop_event.wait(self.interval_seconds):
+            self.trigger()
+
+    def _scan(self) -> None:
+        try:
+            config_path = self.db.path.parent / "config.json"
+            config = _loads(config_path.read_text(encoding="utf-8") if config_path.is_file() else "", {})
+            result = scan_sources(self.db, load_profile(self.db), config.get("job_sources", []))
+            error = "; ".join(f"{item['source']}: {item['error']}" for item in result["errors"]) or None
+            state = "degraded" if error else "watching"
+        except (OSError, RuntimeError, ValueError) as failure:
+            result, error, state = None, str(failure), "failed"
+        completed = datetime.now(timezone.utc)
+        with self.lock:
+            self._status.update(
+                state=state, last_scan_at=completed.isoformat(timespec="seconds"),
+                next_scan_at=(completed + timedelta(seconds=self.interval_seconds)).isoformat(timespec="seconds"),
+                last_result=result, error=error,
+            )
+
+
 def _event_text(event: Any) -> str:
     if not isinstance(event, dict):
         return ""
@@ -257,12 +319,13 @@ def _event_text(event: Any) -> str:
 class CareerServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], db: Database, root: Path, runner: CodexRunner):
+    def __init__(self, address: tuple[str, int], db: Database, root: Path, runner: CodexRunner, watcher: JobWatcher):
         super().__init__(address, CareerHandler)
         self.db = db
         self.root = root.resolve()
         self.data_root = db.path.parent.resolve()
         self.runner = runner
+        self.watcher = watcher
         self.token = secrets.token_urlsafe(32)
 
 
@@ -328,7 +391,9 @@ class CareerHandler(BaseHTTPRequestHandler):
             return
         try:
             if parsed.path == "/api/state":
-                self._json(dashboard_state(self.server.db))
+                state = dashboard_state(self.server.db)
+                state["watcher"] = self.server.watcher.status()
+                self._json(state)
             elif parsed.path == "/api/codex":
                 self._json(self.server.runner.status())
             elif parsed.path.startswith("/api/runs/"):
@@ -354,6 +419,8 @@ class CareerHandler(BaseHTTPRequestHandler):
                 self._json(self.server.runner.start(prompt), 202)
             elif parsed.path == "/api/codex/login":
                 self._json(self.server.runner.start_login(), 202)
+            elif parsed.path == "/api/jobs/scan":
+                self._json(self.server.watcher.trigger(), 202)
             elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/status"):
                 parts = parsed.path.strip("/").split("/")
                 status = str(body.get("status", ""))
@@ -383,12 +450,16 @@ class CareerHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def make_server(db: Database, root: Path, port: int = 8765, runner: CodexRunner | None = None) -> CareerServer:
-    return CareerServer(("127.0.0.1", port), db, root, runner or CodexRunner(root))
+def make_server(
+    db: Database, root: Path, port: int = 8765, runner: CodexRunner | None = None,
+    watcher: JobWatcher | None = None,
+) -> CareerServer:
+    return CareerServer(("127.0.0.1", port), db, root, runner or CodexRunner(root), watcher or JobWatcher(db))
 
 
 def serve(db: Database, root: Path, *, port: int = 8765, open_browser: bool = True) -> None:
     server = make_server(db, root, port)
+    server.watcher.start()
     address = f"http://127.0.0.1:{server.server_port}/"
     print(f"Codex Career is running at {address}")
     print("Personal data stays local. Press Ctrl+C to stop.")
@@ -399,4 +470,5 @@ def serve(db: Database, root: Path, *, port: int = 8765, open_browser: bool = Tr
     except KeyboardInterrupt:
         print("\nCodex Career stopped.")
     finally:
+        server.watcher.stop()
         server.server_close()

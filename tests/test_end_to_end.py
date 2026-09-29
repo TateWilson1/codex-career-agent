@@ -237,6 +237,11 @@ class CareerFlowTest(unittest.TestCase):
         )
         self.assertFalse(wrong_class["education_fit"])
         self.assertTrue(any("Graduate hiring window" in item["reason"] for item in wrong_class["deductions"]))
+        description_match = score_job(
+            {**fresh, "title": "Cybersecurity Analyst Intern", "description": "Open to candidates graduating December 2026 or May 2027."},
+            {**PROFILE, "education": [{"degree": "BS Cybersecurity", "dates": "Expected December 2026"}]},
+        )
+        self.assertTrue(description_match["education_fit"])
         restricted = {**fresh, "title": "Senior Digital Forensics Analyst", "description": fresh["description"] + " Requires 7 years experience.", "clearance_requirement": "Active Top Secret clearance required"}
         blocked = score_job(restricted, {**PROFILE, "security_clearance": "None"})
         self.assertLess(blocked["score"], result["score"])

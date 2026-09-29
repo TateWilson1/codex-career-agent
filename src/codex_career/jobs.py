@@ -109,12 +109,17 @@ def import_jobs(db: Database, jobs: Iterable[dict[str, Any]], source: str, capab
                     "INSERT INTO companies(public_id,normalized_name,name,url,created_at,updated_at) VALUES(?,?,?,?,?,?) RETURNING id",
                     (new_id("co"), company_key, job["company"], job["company_url"], timestamp, timestamp),
                 ).fetchone()["id"]
-            existing = connection.execute("SELECT id FROM jobs WHERE fingerprint=?", (mark,)).fetchone()
+            existing = connection.execute("SELECT * FROM jobs WHERE fingerprint=?", (mark,)).fetchone()
             values = {
                 **job, "company_id": company_id, "job_source_id": job_source_id,
                 "original_content": json.dumps(raw, sort_keys=True, default=str), "updated_at": timestamp,
             }
             if existing:
+                for key, value in list(values.items()):
+                    if key == "original_content":
+                        values[key] = existing[key]
+                    elif value in (None, "", "[]") and existing[key] not in (None, "", "[]"):
+                        values[key] = existing[key]
                 assignments = ",".join(f"{key}=?" for key in values)
                 connection.execute(f"UPDATE jobs SET {assignments} WHERE id=?", (*values.values(), existing["id"]))
                 updated += 1
@@ -196,8 +201,9 @@ def score_job(job: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     deductions: list[dict[str, Any]] = []
     education_text = json.dumps(profile.get("education", []), sort_keys=True).lower()
     expected_years = set(re.findall(r"expected[^0-9]{0,30}(20\d{2})", education_text))
+    graduation_items = [job.get("title", ""), *required, *re.split(r"[\n.!?]", job.get("description", ""))]
     graduation_requirements = " ".join(
-        str(item) for item in [job.get("title", ""), *required]
+        str(item) for item in graduation_items
         if any(term in normalized(str(item)) for term in ("graduate", "graduating", "degree candidate"))
     )
     eligible_graduation_years = set(re.findall(r"20\d{2}", graduation_requirements))

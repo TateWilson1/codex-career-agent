@@ -73,6 +73,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .view.is-active { display: block; animation: enter 180ms ease-out both; }
 .loading { margin-top: 28px; padding: 18px; color: var(--ink-soft); border: 1px dashed var(--line-strong); }
 .error-banner { margin-top: 20px; padding: 13px 15px; color: #732e2a; background: #fae9e6; border: 1px solid #d4a09b; border-radius: var(--radius-sm); font-weight: 700; }
+.watch-strip { display: flex; gap: 9px; align-items: center; min-height: 42px; padding: 10px 0; color: var(--ink-soft); border-bottom: 1px solid var(--line); font: 11px var(--mono); }
+.watch-dot { width: 8px; height: 8px; flex: 0 0 auto; background: var(--good); border-radius: 50%; box-shadow: 0 0 0 4px rgba(23, 108, 100, .12); }
+.watch-dot.has-error { background: var(--danger); box-shadow: 0 0 0 4px rgba(163, 69, 63, .12); }
+.fresh-alert { display: flex; justify-content: space-between; gap: 24px; align-items: center; margin-bottom: 18px; padding: 18px 20px; color: #f8fbfa; background: var(--good); border-radius: var(--radius-md); box-shadow: var(--shadow); }
+.fresh-alert h2 { font-size: 18px; }
+.fresh-alert p { margin: 4px 0 0; color: #d9eeea; font-size: 13px; }
+.fresh-alert .section-code { color: #9fe1d9; }
 .hero-strip { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; padding: 24px; background: var(--surface-strong); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .hero-strip h2 { max-width: 19ch; font-size: clamp(23px, 2.5vw, 32px); }
 .hero-strip p { max-width: 62ch; margin: 10px 0 0; color: var(--ink-soft); }

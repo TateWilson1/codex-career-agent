@@ -3,6 +3,7 @@ const headers = {"Content-Type": "application/json", "X-Career-Token": token};
 let state = null;
 let activeRun = null;
 let currentView = "dashboard";
+const alertedJobs = new Set(JSON.parse(localStorage.getItem("career-alerted-jobs") || "[]"));
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -32,6 +33,7 @@ async function refresh() {
     $("#loading").hidden = true;
     $("#error-banner").hidden = true;
     renderAll();
+    notifyFreshAlerts();
   } catch (error) {
     $("#loading").hidden = true;
     $("#error-banner").textContent = `Could not load the career workspace. ${error.message}`;
@@ -62,6 +64,7 @@ async function connectCodex() {
 }
 
 function renderAll() {
+  renderWatchStatus();
   renderDashboard();
   renderJobs();
   renderApplications();
@@ -80,10 +83,12 @@ function renderDashboard() {
     ...state.automation.filter(item => ["blocked", "ready_for_fill", "authorized_to_submit"].includes(item.state)).map(item => ({title: `Application ${item.state.replaceAll("_", " ")}`, detail: `${item.company} · ${item.title}`, prompt: `Review automation run ${item.id} for ${item.company}. Show its safety state, exact approved documents, and the next permitted action.`}))
   ].slice(0, 5);
   const objective = state.career_goal;
+  const alerts = (state.fresh_alerts || []).slice(0, 3);
+  const alertHtml = alerts.length ? `<div class="fresh-alert"><div><p class="section-code">NEW STRONG MATCH${alerts.length === 1 ? "" : "ES"}</p><h2>${alerts.length} strong ${alerts.length === 1 ? "role was" : "roles were"} found in the last 24 hours</h2><p>Review quickly while the posting is fresh.</p></div><button class="button button-primary" data-view-target="jobs">Review now</button></div>` : "";
   const jobsHtml = jobs.length ? `<ul class="job-list">${jobs.map(jobRow).join("")}</ul>` : emptyState("No jobs saved yet", "Codex can search, import, deduplicate, and score current openings against your verified profile.", "Find current jobs matching my verified profile and preferences. Import, deduplicate, and evaluate the strongest options.", "Start a job search");
   const tasksHtml = pending.length ? `<ul class="task-list">${pending.map(item => `<li class="task-item"><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.detail)}</p></div><button class="button button-quiet" data-prompt="${escapeHtml(item.prompt)}">Handle</button></li>`).join("")}</ul>` : `<div class="panel-body"><p class="muted">No interviews, follow-ups, or browser runs need attention.</p></div>`;
   $("#dashboard-content").innerHTML = `
-    <div class="hero-strip"><div><p class="section-code">CURRENT OBJECTIVE</p><h2>${escapeHtml(objective)}</h2><p>${profile ? `Working from ${state.verified_evidence_count} verified evidence records. Codex can propose changes, but you approve the profile and every document version.` : "Your profile has not been created yet. Start onboarding and Codex will draft it for review before anything is saved."}</p></div><div class="profile-stamp"><strong>${profile ? `v${state.profile_versions[0]?.version || 1}` : "—"}</strong><span>${profile ? "Reviewed career profile" : "Profile not started"}</span></div></div>
+    ${alertHtml}<div class="hero-strip"><div><p class="section-code">CURRENT OBJECTIVE</p><h2>${escapeHtml(objective)}</h2><p>${profile ? `Working from ${state.verified_evidence_count} verified evidence records. Codex can propose changes, but you approve the profile and every document version.` : "Your profile has not been created yet. Start onboarding and Codex will draft it for review before anything is saved."}</p></div><div class="profile-stamp"><strong>${profile ? `v${state.profile_versions[0]?.version || 1}` : "—"}</strong><span>${profile ? "Reviewed career profile" : "Profile not started"}</span></div></div>
     <div class="metric-row"><div class="metric"><strong>${state.counts.jobs}</strong><span>Saved jobs</span></div><div class="metric"><strong>${state.counts.interested}</strong><span>Priority matches</span></div><div class="metric"><strong>${state.counts.applications}</strong><span>Applications</span></div><div class="metric"><strong>${state.counts.interviews}</strong><span>Upcoming interviews</span></div></div>
     <div class="split-grid"><div><div class="section-heading"><div><h2>Strongest saved matches</h2><p>Ranked against the current verified profile</p></div><button class="button button-quiet" data-view-target="jobs">View all</button></div>${jobsHtml}</div><div><div class="section-heading"><div><h2>Needs attention</h2><p>Human decisions and time-sensitive work</p></div></div><div class="panel">${tasksHtml}</div></div></div>`;
 }
@@ -93,14 +98,42 @@ function jobRow(job) {
   const matches = job.evaluation?.strong_matches?.slice(0, 3) || [];
   const freshness = job.evaluation?.freshness || "date unknown";
   const recommendation = job.evaluation?.recommendation || "unscored";
-  return `<li class="job-row" data-job-id="${job.id}"><div><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} · ${escapeHtml(job.location || "Location not listed")}</p><div class="tag-list"><span class="tag freshness">${escapeHtml(freshness)}</span><span class="tag">${escapeHtml(recommendation)} match</span>${matches.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join("")}</div></div><div class="score ${score === "—" ? "is-empty" : ""}" aria-label="Match score ${score}">${score}</div><div class="row-actions">${statusBadge(job.status)}${job.status === "discovered" ? `<button class="button button-quiet" data-job-status="interested" data-job-id="${job.id}">Save</button>` : ""}<button class="button button-quiet" data-score-job="${job.id}">Why this score?</button><button class="button button-quiet" data-prompt="Prepare an application for saved job ${job.id} (${escapeHtml(job.title)} at ${escapeHtml(job.company)}) using only verified evidence. Generate and validate the exact materials, then show them for approval. Do not submit.">Prepare</button></div></li>`;
+  return `<li class="job-row" data-job-id="${job.id}"><div><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml(job.company)} · ${escapeHtml(job.location || "Location not listed")}</p><div class="tag-list"><span class="tag freshness">${escapeHtml(freshness)}</span><span class="tag">${escapeHtml(recommendation)} match</span>${matches.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join("")}</div></div><div class="score ${score === "—" ? "is-empty" : ""}" aria-label="Match score ${score}">${score}</div><div class="row-actions">${statusBadge(job.status)}${job.status === "discovered" ? `<button class="button button-quiet" data-job-status="interested" data-job-id="${job.id}">Save</button>` : ""}${job.url ? `<a class="button button-quiet" href="${escapeHtml(job.url)}" target="_blank" rel="noreferrer">Posting</a>` : ""}<button class="button button-quiet" data-score-job="${job.id}">Why this score?</button><button class="button button-quiet" data-prompt="Prepare an application for saved job ${job.id} (${escapeHtml(job.title)} at ${escapeHtml(job.company)}) using only verified evidence. Generate and validate the exact materials, then show them for approval. Do not submit.">Prepare</button></div></li>`;
 }
 
 function renderSources() {
   const boards = state.job_boards || [];
   const rows = boards.map(board => `<li class="source-row"><div><div class="source-title"><h3>${escapeHtml(board.name)}</h3>${statusBadge(board.kind)}</div><p>${escapeHtml(board.coverage)}</p><small>${escapeHtml(board.note)}</small></div><div><span class="priority-label">${escapeHtml(board.priority)} priority</span><a class="button button-quiet" href="${escapeHtml(board.url)}" target="_blank" rel="noreferrer">Open source</a></div></li>`).join("");
   const runs = (state.search_runs || []).slice(0, 5).map(run => `<li><strong>${escapeHtml(run.source)}</strong><p>${run.result_count} listings checked · ${formatDate(run.finished_at)}</p></li>`).join("");
-  $("#sources-content").innerHTML = `<div class="safety-note"><strong>Fresh-job watch</strong><p>The watch prioritizes postings found in their first 24 hours. Public employer APIs can be polled directly; account-gated boards stay human-controlled through official alerts and browser-assisted review.</p></div><div class="source-layout"><div><div class="section-heading"><div><h2>Connected source map</h2><p>${boards.length} researched sources, ranked for your career target</p></div><button class="button button-primary" data-prompt="Run the fresh-job watch now. Search every configured source for new DFIR, incident response, SOC, cybersecurity analyst, and relevant internship or new-graduate roles. Import and deduplicate legitimate openings, score them against my verified profile, and report only strong or time-sensitive matches. Do not apply.">Scan now</button></div><ul class="source-list">${rows}</ul></div><aside><div class="score-guide"><h2>What the score means</h2><p class="score-band"><strong>80–100</strong> Excellent: direct role, verified skills, entry-level fit, and few risks.</p><p class="score-band"><strong>65–79</strong> Strong: worth prompt review and usually worth applying.</p><p class="score-band"><strong>50–64</strong> Stretch: useful alignment, but a meaningful gap needs judgment.</p><p class="score-band"><strong>0–49</strong> Low: poor level fit or a blocking requirement.</p><dl class="weight-list"><dt>Role alignment</dt><dd>30</dd><dt>Verified skills</dt><dd>25</dd><dt>Entry-level fit</dt><dd>15</dd><dt>Location / mode</dt><dd>10</dd><dt>Freshness</dt><dd>10</dd><dt>Employment type</dt><dd>5</dd><dt>Career direction</dt><dd>5</dd></dl><p class="muted">Active-clearance, seniority, contract-only, and extensive-travel conflicts subtract points. Unknown facts stay unknown; they are never guessed.</p></div><div class="panel recent-searches"><div class="panel-header"><h2>Recent scans</h2></div>${runs ? `<ul class="timeline">${runs}</ul>` : `<div class="panel-body"><p class="muted">No automated source scan has been recorded yet.</p></div>`}</div></aside></div>`;
+  $("#sources-content").innerHTML = `<div class="safety-note"><strong>Fresh-job watch</strong><p>The local watcher checks configured first-party feeds every ${Math.round((state.watcher?.interval_seconds || 300) / 60)} minutes while this app is running. Account-gated boards stay human-controlled through official alerts and browser-assisted review.</p><button class="button button-quiet" data-enable-alerts>Enable desktop alerts</button></div><div class="source-layout"><div><div class="section-heading"><div><h2>Connected source map</h2><p>${boards.length} researched sources, ranked for your career target</p></div><button class="button button-primary" data-scan-now>Scan now</button></div><ul class="source-list">${rows}</ul></div><aside><div class="score-guide"><h2>What the score means</h2><p class="score-band"><strong>80–100</strong> Excellent: direct role, verified skills, entry-level fit, and few risks.</p><p class="score-band"><strong>65–79</strong> Strong: worth prompt review and usually worth applying.</p><p class="score-band"><strong>50–64</strong> Stretch: useful alignment, but a meaningful gap needs judgment.</p><p class="score-band"><strong>0–49</strong> Low: poor level fit or a blocking requirement.</p><dl class="weight-list"><dt>Role alignment</dt><dd>30</dd><dt>Verified skills</dt><dd>25</dd><dt>Entry-level fit</dt><dd>15</dd><dt>Location / mode</dt><dd>10</dd><dt>Freshness</dt><dd>10</dd><dt>Employment type</dt><dd>5</dd><dt>Career direction</dt><dd>5</dd></dl><p class="muted">Active-clearance, seniority, contract-only, and extensive-travel conflicts subtract points. Unknown facts stay unknown; they are never guessed.</p></div><div class="panel recent-searches"><div class="panel-header"><h2>Recent scans</h2></div>${runs ? `<ul class="timeline">${runs}</ul>` : `<div class="panel-body"><p class="muted">No automated source scan has been recorded yet.</p></div>`}</div></aside></div>`;
+}
+
+function renderWatchStatus() {
+  const watcher = state.watcher || {};
+  const label = watcher.state === "scanning" ? "Scanning first-party job feeds now…" : watcher.error ? `Watch needs attention: ${watcher.error}` : watcher.last_scan_at ? `Live watch on · last checked ${formatDate(watcher.last_scan_at)} · next check ${formatDate(watcher.next_scan_at)}` : "Live watch is starting…";
+  $("#watch-strip").innerHTML = `<span class="watch-dot ${watcher.error ? "has-error" : ""}"></span><span>${escapeHtml(label)}</span>`;
+  $$('[data-scan-now]').forEach(button => { button.disabled = watcher.state === "scanning"; });
+}
+
+async function scanNow() {
+  try {
+    await api("/api/jobs/scan", {method: "POST", body: "{}"});
+    showToast("Fresh-job scan started.");
+    await refresh();
+  } catch (error) { showToast(error.message); }
+}
+
+async function enableDesktopAlerts() {
+  if (!("Notification" in window)) return showToast("Desktop notifications are not supported by this browser.");
+  const permission = await Notification.requestPermission();
+  showToast(permission === "granted" ? "Desktop job alerts enabled." : "Desktop alerts were not enabled.");
+}
+
+function notifyFreshAlerts() {
+  const unseen = (state.fresh_alerts || []).filter(job => !alertedJobs.has(job.id));
+  if ("Notification" in window && Notification.permission === "granted") unseen.forEach(job => new Notification(`${job.score}% match · ${job.title}`, {body: `${job.company} · ${job.location || "Location not listed"}`}));
+  (state.fresh_alerts || []).forEach(job => alertedJobs.add(job.id));
+  localStorage.setItem("career-alerted-jobs", JSON.stringify([...alertedJobs].slice(-200)));
 }
 
 function showScore(jobId) {
@@ -147,6 +180,8 @@ function renderActivity() {
 }
 
 function bindDynamicActions() {
+  $$('[data-scan-now]').forEach(button => { button.onclick = scanNow; });
+  $$('[data-enable-alerts]').forEach(button => { button.onclick = enableDesktopAlerts; });
   $$('[data-prompt]').forEach(button => {
     button.onclick = () => runCodex(button.dataset.prompt);
   });
@@ -232,3 +267,4 @@ const initialView = location.hash.slice(1);
 if (["dashboard", "jobs", "sources", "applications", "resume", "activity"].includes(initialView)) switchView(initialView);
 refresh();
 refreshCodex();
+setInterval(refresh, 30000);

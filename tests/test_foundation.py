@@ -95,6 +95,27 @@ class FoundationTest(unittest.TestCase):
             self.assertIn("Python", factors["matched_requirements"])
             self.assertEqual(factors["missing_requirements"], ["CPA license"])
 
+    def test_source_refresh_preserves_original_and_enriched_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            db = Database(Path(folder) / "career.db")
+            original = {
+                "company": "Example Works", "title": "Security Analyst",
+                "url": "https://jobs.example.test/security", "application_url": "https://apply.example.test/security",
+                "description": "Original posting.", "required_qualifications": ["Python"], "salary_min": 70000,
+            }
+            import_jobs(db, [original], "fixture:board", "AUTOMATED")
+            import_jobs(db, [{
+                "company": "Example Works", "title": "Security Analyst",
+                "url": original["url"], "description": "Updated public description.",
+            }], "fixture:board", "AUTOMATED")
+            with db.connect() as connection:
+                job = connection.execute("SELECT * FROM jobs").fetchone()
+            self.assertEqual(job["description"], "Updated public description.")
+            self.assertEqual(job["application_url"], original["application_url"])
+            self.assertEqual(job["salary_min"], 70000)
+            self.assertEqual(json.loads(job["required_qualifications_json"]), ["Python"])
+            self.assertEqual(json.loads(job["original_content"])["description"], "Original posting.")
+
     def test_answer_classification_is_conservative(self) -> None:
         self.assertEqual(classify_question("email", verified=True), "AUTO")
         self.assertEqual(classify_question("expected_graduation", verified=True), "AUTO")

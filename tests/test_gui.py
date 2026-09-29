@@ -29,6 +29,18 @@ class FakeRunner:
         return {"id": run_id, "state": "complete", "result": "Done", "events": []}
 
 
+class FakeWatcher:
+    def __init__(self):
+        self.triggered = False
+
+    def status(self):
+        return {"state": "watching", "interval_seconds": 300, "last_scan_at": None, "next_scan_at": None, "error": None}
+
+    def trigger(self):
+        self.triggered = True
+        return {**self.status(), "state": "scanning"}
+
+
 class GuiTest(unittest.TestCase):
     def test_structured_career_goal_uses_near_term_objective(self) -> None:
         profile = {
@@ -57,12 +69,15 @@ class GuiTest(unittest.TestCase):
             db = Database(Path(folder) / "career.db")
             save_profile(db, PROFILE)
             import_jobs(db, JOBS[:1], "fixture")
+            with db.connect() as connection:
+                connection.execute("UPDATE jobs SET score=70, score_json=?", (json.dumps({"freshness": "first 24 hours"}),))
             payload = dashboard_state(db)
             self.assertEqual(payload["profile"]["name"], "Jordan Rivera")
             self.assertEqual(payload["counts"]["jobs"], 1)
             self.assertEqual(payload["jobs"][0]["company"], "Contoso Defense")
             self.assertGreaterEqual(len(payload["job_boards"]), 10)
             self.assertIn("search_runs", payload)
+            self.assertEqual(payload["fresh_alerts"][0]["score"], 70)
             self.assertNotIn("approval_token", json.dumps(payload))
 
     def test_local_server_requires_session_token_for_private_data(self) -> None:
@@ -70,7 +85,8 @@ class GuiTest(unittest.TestCase):
             root = Path(folder)
             db = Database(root / "career.db")
             save_profile(db, PROFILE)
-            server = make_server(db, root, port=0, runner=FakeRunner())
+            watcher = FakeWatcher()
+            server = make_server(db, root, port=0, runner=FakeRunner(), watcher=watcher)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -85,6 +101,15 @@ class GuiTest(unittest.TestCase):
                 payload = json.loads(response.read())
                 self.assertEqual(response.status, 200)
                 self.assertEqual(payload["profile"]["name"], "Jordan Rivera")
+                self.assertEqual(payload["watcher"]["state"], "watching")
+                connection.close()
+
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("POST", "/api/jobs/scan", "{}", {"Content-Type": "application/json", "X-Career-Token": server.token})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 202)
+                self.assertEqual(json.loads(response.read())["state"], "scanning")
+                self.assertTrue(watcher.triggered)
                 connection.close()
 
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
