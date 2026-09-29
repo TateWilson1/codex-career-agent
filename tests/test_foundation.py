@@ -37,7 +37,7 @@ class FoundationTest(unittest.TestCase):
     def test_empty_and_legacy_databases_upgrade(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             fresh = Database(Path(folder) / "fresh.db")
-            self.assertEqual(fresh.schema_version, 2)
+            self.assertEqual(fresh.schema_version, 4)
             with fresh.connect() as connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertTrue({"profile_versions", "job_evaluations", "document_versions", "submission_attempts"} <= tables)
@@ -50,7 +50,7 @@ class FoundationTest(unittest.TestCase):
                 )
                 connection.commit()
             legacy = Database(legacy_path)
-            self.assertEqual(legacy.schema_version, 2)
+            self.assertEqual(legacy.schema_version, 4)
             with legacy.connect() as connection:
                 self.assertTrue(connection.execute("SELECT public_id FROM jobs").fetchone()[0].startswith("job_"))
 

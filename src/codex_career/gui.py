@@ -64,9 +64,11 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         profile = None
     with db.connect() as connection:
         counts = {
-            "jobs": connection.execute("SELECT COUNT(*) FROM jobs WHERE status!='archived'").fetchone()[0],
+            "jobs": connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status!='archived' AND closed_at IS NULL"
+            ).fetchone()[0],
             "interested": connection.execute(
-                "SELECT COUNT(*) FROM jobs WHERE status IN ('interested','applying')"
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('interested','applying') AND closed_at IS NULL"
             ).fetchone()[0],
             "applications": connection.execute("SELECT COUNT(*) FROM applications").fetchone()[0],
             "interviews": connection.execute(
@@ -75,11 +77,13 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         }
         jobs = [dict(row) for row in connection.execute(
             "SELECT id,public_id,company,title,location,location_type,employment_type,status,score,url,"
-            "description,posting_date,created_at,score_json,updated_at FROM jobs "
-            "ORDER BY CASE WHEN status='archived' THEN 1 ELSE 0 END,score DESC,updated_at DESC LIMIT 100"
+            "description,posting_date,created_at,last_seen_at,closed_at,score_json,updated_at FROM jobs "
+            "ORDER BY CASE WHEN closed_at IS NOT NULL OR status='archived' THEN 1 ELSE 0 END,"
+            "score DESC,updated_at DESC LIMIT 100"
         )]
         search_runs = [dict(row) for row in connection.execute(
-            "SELECT source,result_count,finished_at FROM search_runs ORDER BY id DESC LIMIT 20"
+            "SELECT source,result_count,finished_at,status,error_text "
+            "FROM search_runs ORDER BY id DESC LIMIT 50"
         )]
         applications = [dict(row) for row in connection.execute(
             "SELECT a.id,a.public_id,a.status,a.submitted_at,a.next_action,a.updated_at,j.company,j.title,"
@@ -122,7 +126,7 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         evidence_count = connection.execute("SELECT COUNT(*) FROM evidence WHERE verified=1").fetchone()[0]
         alert_rows = [dict(row) for row in connection.execute(
             "SELECT id,company,title,location,location_type,score,url,posting_date,created_at,score_json "
-            "FROM jobs WHERE status!='archived' AND score>=65 AND created_at>=? "
+            "FROM jobs WHERE status!='archived' AND closed_at IS NULL AND score>=65 AND created_at>=? "
             "ORDER BY created_at DESC,score DESC LIMIT 20",
             ((datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds"),),
         )]
@@ -141,13 +145,24 @@ def dashboard_state(db: Database) -> dict[str, Any]:
     for run in search_runs:
         latest_runs.setdefault(run["source"], run)
     configured_sources = []
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=20)
     for source in config.get("job_sources", []):
         source_name = f"{source.get('provider', '')}:{source.get('account', '')}"
         last_run = latest_runs.get(source_name, {})
+        health = "awaiting"
+        if last_run:
+            health = "failed" if last_run.get("status") == "failed" else "healthy"
+            try:
+                checked_at = datetime.fromisoformat(str(last_run.get("finished_at", "")).replace("Z", "+00:00"))
+                if health == "healthy" and checked_at.astimezone(timezone.utc) < stale_before:
+                    health = "stale"
+            except ValueError:
+                health = "stale"
         configured_sources.append({
             "provider": source.get("provider", ""), "account": source.get("account", ""),
             "company": source.get("company", ""), "last_checked": last_run.get("finished_at"),
             "last_result_count": last_run.get("result_count"),
+            "health": health, "error": last_run.get("error_text", ""),
         })
     connections = connection_registry(config)
     return {
@@ -171,6 +186,7 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         "configured_sources": configured_sources,
         "coverage": {
             "automatic_sources": len(configured_sources),
+            "unhealthy_sources": sum(item["health"] in {"failed", "stale"} for item in configured_sources),
             "account_alerts": sum(item["state"] == "alerts_ready" for item in connections),
             "needs_setup": sum(item["state"] == "setup_required" for item in connections),
         },

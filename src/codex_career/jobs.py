@@ -112,12 +112,15 @@ def import_jobs(db: Database, jobs: Iterable[dict[str, Any]], source: str, capab
             existing = connection.execute("SELECT * FROM jobs WHERE fingerprint=?", (mark,)).fetchone()
             values = {
                 **job, "company_id": company_id, "job_source_id": job_source_id,
-                "original_content": json.dumps(raw, sort_keys=True, default=str), "updated_at": timestamp,
+                "original_content": json.dumps(raw, sort_keys=True, default=str), "missed_scans": 0,
+                "last_seen_at": timestamp, "closed_at": None, "updated_at": timestamp,
             }
             if existing:
                 for key, value in list(values.items()):
                     if key == "original_content":
                         values[key] = existing[key]
+                    elif key == "closed_at":
+                        values[key] = None
                     elif value in (None, "", "[]") and existing[key] not in (None, "", "[]"):
                         values[key] = existing[key]
                 assignments = ",".join(f"{key}=?" for key in values)
@@ -302,12 +305,18 @@ def evaluate_jobs(db: Database, profile: dict[str, Any], job_id: int | None = No
     return count
 
 
-def record_search_run(db: Database, source: str, query: dict[str, Any], result_count: int) -> None:
+def record_search_run(
+    db: Database, source: str, query: dict[str, Any], result_count: int,
+    *, status: str = "success", error: str = "",
+) -> None:
+    if status not in {"success", "failed"}:
+        raise ValueError("Search run status must be success or failed")
     timestamp = now()
     with db.connect() as connection:
         connection.execute(
-            "INSERT INTO search_runs(public_id,source,query_json,result_count,started_at,finished_at) VALUES(?,?,?,?,?,?)",
-            (new_id("search"), source, json.dumps(query, sort_keys=True), result_count, timestamp, timestamp),
+            "INSERT INTO search_runs(public_id,source,query_json,result_count,started_at,finished_at,status,error_text) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (new_id("search"), source, json.dumps(query, sort_keys=True), result_count, timestamp, timestamp, status, error[:1000]),
         )
 
 
@@ -323,7 +332,10 @@ def scan_sources(
         raise ValueError("No automated job sources are configured")
     configured_discoverer = discoverer
     started = now()
-    summary: dict[str, Any] = {"sources": [], "checked": 0, "inserted": 0, "updated": 0, "archived": 0, "errors": []}
+    summary: dict[str, Any] = {
+        "sources": [], "checked": 0, "inserted": 0, "updated": 0,
+        "closed": 0, "archived": 0, "errors": [],
+    }
     role_terms = {
         "cyber", "security", "forensic", "incident response", "soc", "threat", "vulnerability",
         "identity", "iam", "grc", "governance risk", "information assurance", "digital evidence",
@@ -341,7 +353,28 @@ def scan_sources(
             relevant = [job for job in found if any(contains_phrase(str(job.get("title", "")), term) for term in role_terms)]
             result = import_jobs(db, relevant, source, source_capability(provider))
             record_search_run(db, source, {"account": account, "company": company}, len(found))
-            summary["sources"].append({"source": source, "checked": len(found), "relevant": len(relevant), **result})
+            closed = 0
+            if found:
+                seen = {fingerprint(normalize_job(job), source) for job in relevant}
+                with db.connect() as connection:
+                    missing = [row for row in connection.execute(
+                        "SELECT id,fingerprint,missed_scans FROM jobs WHERE source=? AND closed_at IS NULL", (source,)
+                    ) if row["fingerprint"] not in seen]
+                    if missing:
+                        timestamp = now()
+                        for row in missing:
+                            missed_scans = row["missed_scans"] + 1
+                            newly_closed = missed_scans >= 2
+                            connection.execute(
+                                "UPDATE jobs SET missed_scans=?,closed_at=CASE WHEN ? THEN ? ELSE closed_at END,updated_at=? WHERE id=?",
+                                (missed_scans, newly_closed, timestamp, timestamp, row["id"]),
+                            )
+                            closed += newly_closed
+            summary["sources"].append({
+                "source": source, "checked": len(found), "relevant": len(relevant),
+                "closed": closed, **result,
+            })
+            summary["closed"] += closed
             for key in ("checked", "inserted", "updated"):
                 summary[key] += len(found) if key == "checked" else result[key]
             with db.connect() as connection:
@@ -353,7 +386,12 @@ def scan_sources(
                     update_status(db, row["id"], "archived")
                     summary["archived"] += 1
         except (OSError, RuntimeError, ValueError) as error:
-            summary["errors"].append({"source": source, "error": str(error)})
+            message = str(error)
+            record_search_run(
+                db, source, {"account": account, "company": company}, 0,
+                status="failed", error=message,
+            )
+            summary["errors"].append({"source": source, "error": message})
     if summary["sources"]:
         evaluate_jobs(db, profile)
     with db.connect() as connection:

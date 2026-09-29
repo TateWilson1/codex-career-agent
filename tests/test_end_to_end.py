@@ -303,6 +303,47 @@ class CareerFlowTest(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM search_runs").fetchone()[0], 1)
             self.assertEqual(connection.execute("SELECT status FROM jobs WHERE title='Accounts Payable Coordinator'").fetchone()[0], "archived")
 
+    def test_source_health_and_job_availability_follow_real_feed_results(self) -> None:
+        source = [{"provider": "greenhouse", "account": "example", "company": "Example Security"}]
+        first = {
+            "company": "Example Security", "title": "Security Analyst", "location": "Remote",
+            "url": "https://example.test/jobs/analyst", "description": "Monitor and investigate alerts.",
+        }
+        second = {
+            "company": "Example Security", "title": "Incident Response Intern", "location": "Remote",
+            "url": "https://example.test/jobs/intern", "description": "Support incident response.",
+        }
+
+        scan_sources(self.db, PROFILE, source, lambda *_: [first])
+        scan_sources(self.db, PROFILE, source, lambda *_: [])
+        with self.db.connect() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT closed_at FROM jobs WHERE title='Security Analyst'"
+            ).fetchone()[0])
+        result = scan_sources(self.db, PROFILE, source, lambda *_: [second])
+        self.assertEqual(result["closed"], 0)
+        result = scan_sources(self.db, PROFILE, source, lambda *_: [second])
+        self.assertEqual(result["closed"], 1)
+        with self.db.connect() as connection:
+            self.assertIsNotNone(connection.execute(
+                "SELECT closed_at FROM jobs WHERE title='Security Analyst'"
+            ).fetchone()[0])
+
+        scan_sources(self.db, PROFILE, source, lambda *_: [first, second])
+        def unavailable(*_):
+            raise OSError("feed unavailable")
+
+        failed = scan_sources(self.db, PROFILE, source, unavailable)
+        self.assertEqual(failed["errors"][0]["error"], "feed unavailable")
+        with self.db.connect() as connection:
+            self.assertIsNone(connection.execute(
+                "SELECT closed_at FROM jobs WHERE title='Security Analyst'"
+            ).fetchone()[0])
+            run = connection.execute(
+                "SELECT status,error_text FROM search_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual((run["status"], run["error_text"]), ("failed", "feed unavailable"))
+
 
 if __name__ == "__main__":
     unittest.main()

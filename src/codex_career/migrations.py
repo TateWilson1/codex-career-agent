@@ -164,5 +164,20 @@ CREATE UNIQUE INDEX idx_automation_runs_public_id ON automation_runs(public_id);
 CREATE UNIQUE INDEX idx_preparations_public_id ON preparations(public_id);
 """
 
-MIGRATIONS = [(1, MIGRATION_1), (2, MIGRATION_2)]
+MIGRATION_3 = """
+ALTER TABLE jobs ADD COLUMN last_seen_at TEXT;
+ALTER TABLE jobs ADD COLUMN closed_at TEXT;
+ALTER TABLE search_runs ADD COLUMN status TEXT NOT NULL DEFAULT 'success'
+    CHECK (status IN ('success','failed'));
+ALTER TABLE search_runs ADD COLUMN error_text TEXT NOT NULL DEFAULT '';
 
+UPDATE jobs SET last_seen_at=updated_at WHERE last_seen_at IS NULL;
+CREATE INDEX idx_jobs_source_availability ON jobs(source, closed_at, last_seen_at);
+CREATE INDEX idx_search_runs_source_latest ON search_runs(source, id DESC);
+"""
+
+MIGRATION_4 = """
+ALTER TABLE jobs ADD COLUMN missed_scans INTEGER NOT NULL DEFAULT 0;
+"""
+
+MIGRATIONS = [(1, MIGRATION_1), (2, MIGRATION_2), (3, MIGRATION_3), (4, MIGRATION_4)]

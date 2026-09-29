@@ -9,7 +9,7 @@ from pathlib import Path
 
 from codex_career.db import Database
 from codex_career.gui import career_goal, dashboard_state, make_server, subscription_status
-from codex_career.jobs import import_jobs
+from codex_career.jobs import import_jobs, record_search_run
 from codex_career.profile import save_profile
 
 from test_end_to_end import JOBS, PROFILE
@@ -73,6 +73,10 @@ class GuiTest(unittest.TestCase):
                 "email": "jordan@example.test", "api_key": "must-not-leak",
             }]}), encoding="utf-8")
             import_jobs(db, JOBS[:1], "fixture")
+            record_search_run(
+                db, "usajobs:cybersecurity", {"account": "cybersecurity"}, 0,
+                status="failed", error="temporary upstream error",
+            )
             with db.connect() as connection:
                 connection.execute("UPDATE jobs SET score=70, score_json=?", (json.dumps({"freshness": "first 24 hours"}),))
             payload = dashboard_state(db)
@@ -83,6 +87,9 @@ class GuiTest(unittest.TestCase):
             self.assertIn("search_runs", payload)
             self.assertEqual(payload["fresh_alerts"][0]["score"], 70)
             self.assertEqual(payload["coverage"]["automatic_sources"], 1)
+            self.assertEqual(payload["coverage"]["unhealthy_sources"], 1)
+            self.assertEqual(payload["configured_sources"][0]["health"], "failed")
+            self.assertEqual(payload["configured_sources"][0]["error"], "temporary upstream error")
             self.assertEqual(next(item for item in payload["connections"] if item["id"] == "usajobs")["state"], "connected")
             self.assertNotIn("must-not-leak", json.dumps(payload))
             self.assertNotIn("approval_token", json.dumps(payload))
