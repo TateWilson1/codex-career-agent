@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#111923">
   <meta name="career-token" content="__CAREER_TOKEN__">
   <title>Codex Career</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/app.css?v=20260929-coverage">
+  <script src="/static/app.js?v=20260929-coverage" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#workspace">Skip to workspace</a>
@@ -21,6 +21,7 @@
         <button class="nav-item is-active" data-view="dashboard">Today</button>
         <button class="nav-item" data-view="jobs">Job desk</button>
         <button class="nav-item" data-view="sources">Sources & scoring</button>
+        <button class="nav-item" data-view="connections">Connections</button>
         <button class="nav-item" data-view="applications">Applications</button>
         <button class="nav-item" data-view="resume">Resume studio</button>
         <button class="nav-item" data-view="activity">Activity</button>
@@ -72,6 +73,9 @@
       </section>
       <section id="view-sources" class="view" aria-labelledby="page-title">
         <div id="sources-content"></div>
+      </section>
+      <section id="view-connections" class="view" aria-labelledby="page-title">
+        <div id="connections-content"></div>
       </section>
       <section id="view-applications" class="view" aria-labelledby="page-title">
         <div id="applications-content"></div>

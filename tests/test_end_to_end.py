@@ -12,7 +12,7 @@ from codex_career.db import Database
 from codex_career.jobs import evaluate_jobs, import_jobs, scan_sources, score_job, update_status
 from codex_career.materials import approve_materials, build_materials, tailoring_packet, validate_proposal
 from codex_career.profile import evidence_id, load_profile, save_profile
-from codex_career.sources import greenhouse, lever, smartrecruiters
+from codex_career.sources import ashby, greenhouse, lever, smartrecruiters, usajobs
 from codex_career.tracking import add_contact, add_followup, add_interview, list_records, update_record_status
 
 
@@ -217,6 +217,28 @@ class CareerFlowTest(unittest.TestCase):
             "typeOfEmployment": {"label": "Intern"}, "ref": "https://example.test/smart-1",
         }]})
         self.assertEqual(smart[0]["location"], "Lexington, Kentucky, US")
+
+        ashby_jobs = ashby("acme", "Acme Security", fetch=lambda _url: {"jobs": [{
+            "id": "ashby-1", "title": "Incident Response Intern", "location": "Remote, US",
+            "jobUrl": "https://jobs.example.test/ashby-1", "applyUrl": "https://jobs.example.test/ashby-1/apply",
+            "descriptionHtml": "<p>Investigate alerts.</p>", "isListed": True,
+            "compensation": {"summaryComponents": [{"compensationType": "Salary", "minValue": 60000, "maxValue": 70000, "currencyCode": "USD"}]},
+        }]})
+        self.assertEqual((ashby_jobs[0]["title"], ashby_jobs[0]["salary_max"]), ("Incident Response Intern", 70000))
+
+        def usajobs_fetch(url: str, headers: dict[str, str]):
+            self.assertIn("Keyword=digital+forensics", url)
+            self.assertEqual(headers["Authorization-Key"], "private-test-key")
+            return {"SearchResult": {"SearchResultItems": [{"MatchedObjectDescriptor": {
+                "PositionID": "federal-1", "PositionTitle": "IT Cybersecurity Specialist",
+                "PositionURI": "https://www.usajobs.gov/job/federal-1", "ApplyURI": ["https://apply.example.test/federal-1"],
+                "OrganizationName": "Example Federal Agency", "PositionLocationDisplay": "Lexington, Kentucky",
+                "PositionSchedule": [{"Name": "Full-time"}], "PublicationStartDate": "2026-09-29",
+                "UserArea": {"Details": {"JobSummary": "Support incident response.", "SecurityClearance": "Not Required"}},
+            }}]}}
+
+        federal = usajobs("digital forensics", fetch=usajobs_fetch, email="jordan@example.test", api_key="private-test-key")
+        self.assertEqual((federal[0]["company"], federal[0]["employment_type"]), ("Example Federal Agency", "Full-time"))
 
     def test_explainable_scoring_rewards_fresh_entry_fit_and_penalizes_clearance(self) -> None:
         fresh = {

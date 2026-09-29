@@ -4,11 +4,13 @@ Codex Career uses the widest safe coverage it can support without scraping priva
 
 ## Source modes
 
-- **Automated:** Greenhouse, Lever, and SmartRecruiters publish official job-posting APIs. An employer board identifier is enough to import and deduplicate listings.
+- **Automated:** Greenhouse, Lever, SmartRecruiters, and Ashby publish official job-posting APIs. An employer board identifier is enough to import and deduplicate listings.
 - **Free key required:** USAJOBS exposes an official search API. It requires a free API key and the email associated with the request.
 - **Alerts or assisted:** LinkedIn, Indeed, Handshake, FBIJobs, ClearanceJobs, CyberSN, Team Kentucky, and employer career pages are opened as first-party searches. Their own alerts should be enabled where available. Codex may review and import the results, but the project does not scrape authenticated pages or bypass CAPTCHA/MFA.
 
 The Sources & scoring screen ranks these sources against the current private profile. Search URLs are generated from that profile at runtime; candidate details are not stored in application code.
+
+The **Connections** screen distinguishes feeds the watcher truly polls from account boards that still need user setup. Users sign in on each board's official site and confirm that saved-search alerts are enabled. The app never asks for or stores those board passwords. USAJOBS is the exception: its free read-only API key is saved only in ignored private configuration and is never returned by the GUI API.
 
 ## Explainable 100-point score
 

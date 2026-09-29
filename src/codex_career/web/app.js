@@ -69,6 +69,7 @@ function renderAll() {
   renderJobs();
   renderApplications();
   renderSources();
+  renderConnections();
   renderResume();
   renderActivity();
   bindDynamicActions();
@@ -105,7 +106,20 @@ function renderSources() {
   const boards = state.job_boards || [];
   const rows = boards.map(board => `<li class="source-row"><div><div class="source-title"><h3>${escapeHtml(board.name)}</h3>${statusBadge(board.kind)}</div><p>${escapeHtml(board.coverage)}</p><small>${escapeHtml(board.note)}</small></div><div><span class="priority-label">${escapeHtml(board.priority)} priority</span><a class="button button-quiet" href="${escapeHtml(board.url)}" target="_blank" rel="noreferrer">Open source</a></div></li>`).join("");
   const runs = (state.search_runs || []).slice(0, 5).map(run => `<li><strong>${escapeHtml(run.source)}</strong><p>${run.result_count} listings checked · ${formatDate(run.finished_at)}</p></li>`).join("");
-  $("#sources-content").innerHTML = `<div class="safety-note"><strong>Fresh-job watch</strong><p>The local watcher checks configured first-party feeds every ${Math.round((state.watcher?.interval_seconds || 300) / 60)} minutes while this app is running. Account-gated boards stay human-controlled through official alerts and browser-assisted review.</p><button class="button button-quiet" data-enable-alerts>Enable desktop alerts</button></div><div class="source-layout"><div><div class="section-heading"><div><h2>Connected source map</h2><p>${boards.length} researched sources, ranked for your career target</p></div><button class="button button-primary" data-scan-now>Scan now</button></div><ul class="source-list">${rows}</ul></div><aside><div class="score-guide"><h2>What the score means</h2><p class="score-band"><strong>80–100</strong> Excellent: direct role, verified skills, entry-level fit, and few risks.</p><p class="score-band"><strong>65–79</strong> Strong: worth prompt review and usually worth applying.</p><p class="score-band"><strong>50–64</strong> Stretch: useful alignment, but a meaningful gap needs judgment.</p><p class="score-band"><strong>0–49</strong> Low: poor level fit or a blocking requirement.</p><dl class="weight-list"><dt>Role alignment</dt><dd>30</dd><dt>Verified skills</dt><dd>25</dd><dt>Entry-level fit</dt><dd>15</dd><dt>Location / mode</dt><dd>10</dd><dt>Freshness</dt><dd>10</dd><dt>Employment type</dt><dd>5</dd><dt>Career direction</dt><dd>5</dd></dl><p class="muted">Active-clearance, seniority, contract-only, and extensive-travel conflicts subtract points. Unknown facts stay unknown; they are never guessed.</p></div><div class="panel recent-searches"><div class="panel-header"><h2>Recent scans</h2></div>${runs ? `<ul class="timeline">${runs}</ul>` : `<div class="panel-body"><p class="muted">No automated source scan has been recorded yet.</p></div>`}</div></aside></div>`;
+  $("#sources-content").innerHTML = `<div class="safety-note"><strong>Fresh-job watch</strong><p>The local watcher checks configured first-party feeds every ${Math.round((state.watcher?.interval_seconds || 300) / 60)} minutes while this app is running. Account-gated boards stay human-controlled through official alerts and browser-assisted review.</p><div class="inline-actions"><button class="button button-quiet" data-enable-alerts>Enable desktop alerts</button><button class="button button-quiet" data-view-target="connections">Manage connections</button></div></div><div class="source-layout"><div><div class="section-heading"><div><h2>Connected source map</h2><p>${boards.length} researched sources, ranked for your career target</p></div><button class="button button-primary" data-scan-now>Scan now</button></div><ul class="source-list">${rows}</ul></div><aside><div class="score-guide"><h2>What the score means</h2><p class="score-band"><strong>80–100</strong> Excellent: direct role, verified skills, entry-level fit, and few risks.</p><p class="score-band"><strong>65–79</strong> Strong: worth prompt review and usually worth applying.</p><p class="score-band"><strong>50–64</strong> Stretch: useful alignment, but a meaningful gap needs judgment.</p><p class="score-band"><strong>0–49</strong> Low: poor level fit or a blocking requirement.</p><dl class="weight-list"><dt>Role alignment</dt><dd>30</dd><dt>Verified skills</dt><dd>25</dd><dt>Entry-level fit</dt><dd>15</dd><dt>Location / mode</dt><dd>10</dd><dt>Freshness</dt><dd>10</dd><dt>Employment type</dt><dd>5</dd><dt>Career direction</dt><dd>5</dd></dl><p class="muted">Active-clearance, seniority, contract-only, and extensive-travel conflicts subtract points. Unknown facts stay unknown; they are never guessed.</p></div><div class="panel recent-searches"><div class="panel-header"><h2>Recent scans</h2></div>${runs ? `<ul class="timeline">${runs}</ul>` : `<div class="panel-body"><p class="muted">No automated source scan has been recorded yet.</p></div>`}</div></aside></div>`;
+}
+
+function renderConnections() {
+  const coverage = state.coverage || {};
+  const sources = (state.configured_sources || []).map(source => `<li class="coverage-row"><div><strong>${escapeHtml(source.company || source.account)}</strong><small>${escapeHtml(source.provider)} · ${escapeHtml(source.account)}</small></div><div><span>${source.last_result_count ?? "—"} checked</span><small>${source.last_checked ? formatDate(source.last_checked) : "Awaiting first scan"}</small></div></li>`).join("");
+  const connections = (state.connections || []).map(connection => {
+    const ready = connection.state !== "setup_required";
+    const controls = connection.id === "usajobs"
+      ? `<form class="usajobs-form" data-usajobs-form><label>Email used for the API request<input type="email" name="email" autocomplete="email" required></label><label>USAJOBS API key<input type="password" name="api_key" autocomplete="off" spellcheck="false" required></label><button class="button button-primary" type="submit">Save private API key</button></form>`
+      : `<button class="button button-quiet" data-alert-ready="${escapeHtml(connection.id)}">${ready ? "Alerts configured" : "Mark alerts ready"}</button>`;
+    return `<li class="connection-row"><div class="connection-copy"><div class="connection-title"><h3>${escapeHtml(connection.name)}</h3>${statusBadge(connection.state)}</div><p>${escapeHtml(connection.coverage)}</p><small>${escapeHtml(connection.setup)}</small></div><div class="connection-actions"><a class="button button-secondary" href="${escapeHtml(connection.url)}" target="_blank" rel="noreferrer">${connection.id === "usajobs" ? "Request free key" : "Open official sign-in"}</a>${controls}</div></li>`;
+  }).join("");
+  $("#connections-content").innerHTML = `<div class="coverage-summary"><div><strong>${coverage.automatic_sources || 0}</strong><span>automatic feeds</span></div><div><strong>${coverage.account_alerts || 0}</strong><span>account alerts ready</span></div><div><strong>${coverage.needs_setup || 0}</strong><span>connections need setup</span></div></div><div class="connection-layout"><section><div class="section-heading"><div><h2>User-controlled job boards</h2><p>Credentials stay with each board. This app stores no passwords.</p></div></div><ul class="connection-list">${connections}</ul></section><aside><div class="section-heading"><div><h2>Automatic employer feeds</h2><p>Official public ATS endpoints polled by the live watcher</p></div><button class="button button-primary" data-install-sources>Add recommended feeds</button></div><div class="panel">${sources ? `<ul class="coverage-list">${sources}</ul>` : `<div class="panel-body"><p class="muted">No automatic feeds configured.</p></div>`}</div></aside></div>`;
 }
 
 function renderWatchStatus() {
@@ -182,6 +196,41 @@ function renderActivity() {
 function bindDynamicActions() {
   $$('[data-scan-now]').forEach(button => { button.onclick = scanNow; });
   $$('[data-enable-alerts]').forEach(button => { button.onclick = enableDesktopAlerts; });
+  $$('[data-install-sources]').forEach(button => {
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const result = await api("/api/sources/recommended", {method: "POST", body: "{}"});
+        showToast(result.added ? `${result.added} verified employer feeds added. Scan started.` : "Recommended employer feeds are already configured.");
+        await refresh();
+      } catch (error) { showToast(error.message); }
+      finally { button.disabled = false; }
+    };
+  });
+  $$('[data-alert-ready]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        await api(`/api/connections/${button.dataset.alertReady}`, {method: "POST", body: JSON.stringify({alerts_enabled: true})});
+        showToast("Official alert setup recorded locally.");
+        await refresh();
+      } catch (error) { showToast(error.message); }
+    };
+  });
+  $$('[data-usajobs-form]').forEach(form => {
+    form.onsubmit = async event => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        const values = Object.fromEntries(new FormData(form));
+        await api("/api/connections/usajobs", {method: "POST", body: JSON.stringify(values)});
+        form.reset();
+        showToast("USAJOBS connected. The first federal scan has started.");
+        await refresh();
+      } catch (error) { showToast(error.message); }
+      finally { submit.disabled = false; }
+    };
+  });
   $$('[data-prompt]').forEach(button => {
     button.onclick = () => runCodex(button.dataset.prompt);
   });
@@ -204,7 +253,7 @@ function switchView(view) {
   currentView = view;
   $$('.view').forEach(item => item.classList.toggle('is-active', item.id === `view-${view}`));
   $$('.nav-item').forEach(item => item.classList.toggle('is-active', item.dataset.view === view));
-  const titles = {dashboard: ["CAREER / TODAY", "Today’s career queue"], jobs: ["CAREER / JOB DESK", "Saved opportunities"], sources: ["CAREER / SOURCES", "Source coverage and scoring"], applications: ["CAREER / APPLICATIONS", "Controlled application pipeline"], resume: ["CAREER / RESUME STUDIO", "Verified facts and exact documents"], activity: ["CAREER / ACTIVITY", "History, interviews, and follow-ups"]};
+  const titles = {dashboard: ["CAREER / TODAY", "Today’s career queue"], jobs: ["CAREER / JOB DESK", "Saved opportunities"], sources: ["CAREER / SOURCES", "Source coverage and scoring"], connections: ["CAREER / CONNECTIONS", "Job-board connections"], applications: ["CAREER / APPLICATIONS", "Controlled application pipeline"], resume: ["CAREER / RESUME STUDIO", "Verified facts and exact documents"], activity: ["CAREER / ACTIVITY", "History, interviews, and follow-ups"]};
   $("#section-code").textContent = titles[view][0];
   $("#page-title").textContent = titles[view][1];
   history.replaceState(null, "", `#${view}`);
@@ -264,7 +313,7 @@ $("#job-search").addEventListener("input", () => state && renderJobs());
 $("#job-status-filter").addEventListener("change", () => state && renderJobs());
 
 const initialView = location.hash.slice(1);
-if (["dashboard", "jobs", "sources", "applications", "resume", "activity"].includes(initialView)) switchView(initialView);
+if (["dashboard", "jobs", "sources", "connections", "applications", "resume", "activity"].includes(initialView)) switchView(initialView);
 refresh();
 refreshCodex();
 setInterval(refresh, 30000);

@@ -321,7 +321,7 @@ def scan_sources(
 
     if not sources:
         raise ValueError("No automated job sources are configured")
-    discoverer = discoverer or discover
+    configured_discoverer = discoverer
     started = now()
     summary: dict[str, Any] = {"sources": [], "checked": 0, "inserted": 0, "updated": 0, "archived": 0, "errors": []}
     role_terms = {
@@ -337,7 +337,7 @@ def scan_sources(
             continue
         source = f"{provider}:{account}"
         try:
-            found = discoverer(provider, account, company)
+            found = configured_discoverer(provider, account, company) if configured_discoverer else discover(provider, account, company, entry)
             relevant = [job for job in found if any(contains_phrase(str(job.get("title", "")), term) for term in role_terms)]
             result = import_jobs(db, relevant, source, source_capability(provider))
             record_search_run(db, source, {"account": account, "company": company}, len(found))

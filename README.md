@@ -85,7 +85,7 @@ The remaining command examples document the deterministic backend for contributo
 
 ## Jobs
 
-The visual command center includes a **Sources & scoring** desk with direct employer feeds, official alert/search links, freshness labels, and an explanation for every score. See [Job sources, freshness, and scoring](docs/JOB_SOURCES_AND_SCORING.md) for the source contract and the 100-point model.
+The visual command center includes a **Sources & scoring** desk plus a **Connections** screen with direct Greenhouse, Lever, SmartRecruiters, Ashby, and USAJOBS coverage; user-controlled account alerts; freshness labels; connection health; and an explanation for every score. See [Job sources, freshness, and scoring](docs/JOB_SOURCES_AND_SCORING.md) for the source contract and the 100-point model.
 
 Import a CSV or JSON list containing `company`, `title`, and optional `location`, `url`, `description`, and `external_id` fields:
 
@@ -105,7 +105,7 @@ job-agent jobs list
 job-agent jobs status 1 interested
 ```
 
-URLs are normalized before hashing, so tracking query strings do not create duplicates. `scan` reads the ignored private `job_sources` configuration, rejects clearly unrelated job titles, and performs import, deduplication, evaluation, search-run recording, and new-match reporting in one command. Discovery uses the public read-only APIs documented by [Greenhouse](https://docs.greenhouse.io/job-board.html) and [Lever](https://github.com/lever/postings-api); it never invokes their application endpoints. A fictional configuration shape is provided at `config/job-sources.example.json`; Codex manages the real private configuration conversationally.
+URLs are normalized before hashing, so tracking query strings do not create duplicates. `scan` reads the ignored private `job_sources` configuration, rejects clearly unrelated job titles, and performs import, deduplication, evaluation, search-run recording, and new-match reporting in one command. Discovery uses the public read-only APIs documented by [Greenhouse](https://docs.greenhouse.io/job-board.html), [Lever](https://github.com/lever/postings-api), [SmartRecruiters](https://developers.smartrecruiters.com/docs/posting-api), [Ashby](https://developers.ashbyhq.com/docs/public-job-posting-api), and [USAJOBS](https://developer.usajobs.gov/api-reference/get-api-search); it never invokes their application endpoints. A fictional configuration shape is provided at `config/job-sources.example.json`; Codex manages the real private configuration conversationally.
 
 ## Tailor and version materials
 

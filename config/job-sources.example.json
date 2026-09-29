@@ -14,6 +14,19 @@
       "provider": "smartrecruiters",
       "account": "example-company-identifier",
       "company": "Example Company"
+    },
+    {
+      "provider": "ashby",
+      "account": "example-job-board-name",
+      "company": "Example Company"
+    },
+    {
+      "provider": "usajobs",
+      "account": "cybersecurity",
+      "company": "US Federal Government",
+      "email": "candidate@example.test",
+      "api_key": "replace-with-free-usajobs-key",
+      "date_posted": 7
     }
   ]
 }

@@ -5,12 +5,12 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
-def json_request(url: str) -> Any:
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": "codex-career/0.1"})
+def json_request(url: str, headers: dict[str, str] | None = None) -> Any:
+    request = Request(url, headers={"Accept": "application/json", "User-Agent": "codex-career/0.1", **(headers or {})})
     with urlopen(request, timeout=30) as response:
         return json.load(response)
 
@@ -31,7 +31,7 @@ def plain_text(value: str) -> str:
     return "\n".join(line.strip() for line in html.unescape("".join(output)).splitlines() if line.strip())
 
 
-def greenhouse(board: str, company: str | None = None, fetch: Callable[[str], Any] = json_request) -> list[dict[str, Any]]:
+def greenhouse(board: str, company: str | None = None, fetch: Callable[[str], Any] = json_request, **_: Any) -> list[dict[str, Any]]:
     token = quote(board, safe="")
     board_data = fetch(f"https://boards-api.greenhouse.io/v1/boards/{token}")
     data = fetch(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true")
@@ -50,7 +50,7 @@ def greenhouse(board: str, company: str | None = None, fetch: Callable[[str], An
     ]
 
 
-def lever(site: str, company: str | None = None, fetch: Callable[[str], Any] = json_request) -> list[dict[str, Any]]:
+def lever(site: str, company: str | None = None, fetch: Callable[[str], Any] = json_request, **_: Any) -> list[dict[str, Any]]:
     data = fetch(f"https://api.lever.co/v0/postings/{quote(site, safe='')}?mode=json")
     def timestamp(value: Any) -> str:
         try:
@@ -78,7 +78,7 @@ def lever(site: str, company: str | None = None, fetch: Callable[[str], Any] = j
     ]
 
 
-def smartrecruiters(company_id: str, company: str | None = None, fetch: Callable[[str], Any] = json_request) -> list[dict[str, Any]]:
+def smartrecruiters(company_id: str, company: str | None = None, fetch: Callable[[str], Any] = json_request, **_: Any) -> list[dict[str, Any]]:
     token = quote(company_id, safe="")
     data = fetch(f"https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100")
     output = []
@@ -97,10 +97,86 @@ def smartrecruiters(company_id: str, company: str | None = None, fetch: Callable
     return output
 
 
+def ashby(board: str, company: str | None = None, fetch: Callable[[str], Any] = json_request, **_: Any) -> list[dict[str, Any]]:
+    data = fetch(f"https://api.ashbyhq.com/posting-api/job-board/{quote(board, safe='')}?includeCompensation=true")
+    output = []
+    for item in data.get("jobs", []):
+        if item.get("isListed") is False:
+            continue
+        compensation = item.get("compensation") or {}
+        salary = next((part for part in compensation.get("summaryComponents", []) if part.get("compensationType") == "Salary"), {})
+        output.append({
+            "external_id": str(item.get("id", "")),
+            "company": company or board,
+            "title": item.get("title", ""),
+            "location": item.get("location", ""),
+            "location_type": item.get("workplaceType", ""),
+            "employment_type": item.get("employmentType", ""),
+            "url": item.get("jobUrl", ""),
+            "application_url": item.get("applyUrl", ""),
+            "posting_date": item.get("publishedAt", ""),
+            "description": plain_text(item.get("descriptionHtml", "")) or item.get("descriptionPlain", ""),
+            "salary_min": salary.get("minValue"),
+            "salary_max": salary.get("maxValue"),
+            "currency": salary.get("currencyCode", ""),
+        })
+    return output
+
+
+def usajobs(
+    query: str, company: str | None = None, fetch: Callable[[str, dict[str, str]], Any] | None = None,
+    **options: Any,
+) -> list[dict[str, Any]]:
+    email, api_key = str(options.get("email", "")).strip(), str(options.get("api_key", "")).strip()
+    if not email or not api_key:
+        raise ValueError("USAJOBS requires the account email and free API key")
+    parameters = {
+        "Keyword": query, "WhoMayApply": "Public", "DatePosted": str(options.get("date_posted", 7)),
+        "ResultsPerPage": "500", "Fields": "Full",
+    }
+    if options.get("location"):
+        parameters["LocationName"] = str(options["location"])
+    if options.get("remote") is True:
+        parameters["RemoteIndicator"] = "True"
+    url = f"https://data.usajobs.gov/api/Search?{urlencode(parameters)}"
+    headers = {"Authorization-Key": api_key, "User-Agent": email, "Host": "data.usajobs.gov"}
+    data = fetch(url, headers) if fetch else json_request(url, headers)
+    items = data.get("SearchResult", {}).get("SearchResultItems", [])
+    output = []
+    for entry in items:
+        item = entry.get("MatchedObjectDescriptor", {})
+        details = item.get("UserArea", {}).get("Details", {})
+        pay = (item.get("PositionRemuneration") or [{}])[0]
+        apply_urls = item.get("ApplyURI") or []
+        output.append({
+            "external_id": str(item.get("PositionID") or entry.get("MatchedObjectId", "")),
+            "company": item.get("OrganizationName") or company or "US Federal Government",
+            "title": item.get("PositionTitle", ""),
+            "location": item.get("PositionLocationDisplay", ""),
+            "employment_type": ", ".join(
+                value.get("Name", "") if isinstance(value, dict) else str(value)
+                for value in (item.get("PositionSchedule") or [])
+            ),
+            "url": item.get("PositionURI", ""),
+            "application_url": apply_urls[0] if apply_urls else item.get("PositionURI", ""),
+            "posting_date": item.get("PublicationStartDate", ""),
+            "expires_at": item.get("ApplicationCloseDate", ""),
+            "description": "\n".join(str(details.get(key, "")) for key in ("JobSummary", "MajorDuties", "Education", "Requirements", "Evaluations") if details.get(key)),
+            "salary_min": pay.get("MinimumRange"),
+            "salary_max": pay.get("MaximumRange"),
+            "currency": "USD",
+            "clearance_requirement": details.get("SecurityClearance", ""),
+            "travel_requirement": details.get("TravelCode", ""),
+        })
+    return output
+
+
 ADAPTERS: dict[str, tuple[str, Callable[..., list[dict[str, Any]]]]] = {
+    "ashby": ("AUTOMATED", ashby),
     "greenhouse": ("AUTOMATED", greenhouse),
     "lever": ("AUTOMATED", lever),
     "smartrecruiters": ("AUTOMATED", smartrecruiters),
+    "usajobs": ("AUTOMATED", usajobs),
 }
 
 
@@ -115,8 +191,9 @@ def source_capability(provider: str) -> str:
         raise ValueError(f"Unknown provider: {provider}") from error
 
 
-def discover(provider: str, account: str, company: str | None = None) -> list[dict[str, Any]]:
+def discover(provider: str, account: str, company: str | None = None, options: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     try:
-        return ADAPTERS[provider][1](account, company)
+        safe_options = {key: value for key, value in (options or {}).items() if key not in {"provider", "account", "company"}}
+        return ADAPTERS[provider][1](account, company, **safe_options)
     except KeyError as error:
         raise ValueError(f"Unknown provider: {provider}") from error

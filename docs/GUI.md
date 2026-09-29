@@ -10,6 +10,12 @@ job-agent gui
 
 The browser opens to `http://127.0.0.1:8765`. The server binds only to the loopback interface, uses a per-launch session token for private requests, sends a restrictive content-security policy, and never exposes `user-data/` as a static directory.
 
+## Job-board connections
+
+The **Connections** screen reports actual automatic coverage and user-controlled account alerts separately. It can install the bundled verified cybersecurity employer feeds, connect a free USAJOBS API key, and open the official sign-in pages for LinkedIn, Indeed, Handshake, ClearanceJobs, FBIJobs, Team Kentucky Careers, and CyberSN. Passwords remain with those sites and are never entered into Codex Career. Marking an account alert ready records only that setup status locally.
+
+The live watcher polls public employer feeds every five minutes while the GUI is running. Account-gated sites are covered through their official alerts and browser-assisted review; the system does not bypass authentication, CAPTCHA, MFA, robots controls, or access restrictions.
+
 ## Connect Codex without API billing
 
 Select **Connect** in the sidebar and finish **Sign in with ChatGPT** in the window that opens. The GUI checks `codex login status` and enables agent runs only when the CLI reports ChatGPT authentication. API-key authentication is rejected, and API-key environment variables are removed from child runs.

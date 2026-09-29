@@ -16,8 +16,9 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from .db import Database
-from .boards import board_registry
+from .boards import CONNECTIONS, RECOMMENDED_SOURCES, board_registry, connection_registry
 from .jobs import JOB_STATUSES, scan_sources, update_status
+from .paths import load_config, save_config
 from .profile import load_profile
 
 
@@ -55,6 +56,8 @@ def career_goal(profile: dict[str, Any] | None) -> str:
 
 
 def dashboard_state(db: Database) -> dict[str, Any]:
+    private_config_path = db.path.parent / "config.json"
+    config = load_config(private_config_path)
     try:
         profile = load_profile(db)
     except ValueError:
@@ -134,6 +137,19 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         event["data"] = _loads(event.pop("data_json"), {})
     for alert in alert_rows:
         alert["evaluation"] = _loads(alert.pop("score_json"), {})
+    latest_runs = {}
+    for run in search_runs:
+        latest_runs.setdefault(run["source"], run)
+    configured_sources = []
+    for source in config.get("job_sources", []):
+        source_name = f"{source.get('provider', '')}:{source.get('account', '')}"
+        last_run = latest_runs.get(source_name, {})
+        configured_sources.append({
+            "provider": source.get("provider", ""), "account": source.get("account", ""),
+            "company": source.get("company", ""), "last_checked": last_run.get("finished_at"),
+            "last_result_count": last_run.get("result_count"),
+        })
+    connections = connection_registry(config)
     return {
         "profile": profile,
         "career_goal": career_goal(profile),
@@ -151,6 +167,13 @@ def dashboard_state(db: Database) -> dict[str, Any]:
         "job_boards": board_registry(profile),
         "search_runs": search_runs,
         "fresh_alerts": alert_rows,
+        "connections": connections,
+        "configured_sources": configured_sources,
+        "coverage": {
+            "automatic_sources": len(configured_sources),
+            "account_alerts": sum(item["state"] == "alerts_ready" for item in connections),
+            "needs_setup": sum(item["state"] == "setup_required" for item in connections),
+        },
     }
 
 
@@ -289,8 +312,7 @@ class JobWatcher:
 
     def _scan(self) -> None:
         try:
-            config_path = self.db.path.parent / "config.json"
-            config = _loads(config_path.read_text(encoding="utf-8") if config_path.is_file() else "", {})
+            config = load_config(self.db.path.parent / "config.json")
             result = scan_sources(self.db, load_profile(self.db), config.get("job_sources", []))
             error = "; ".join(f"{item['source']}: {item['error']}" for item in result["errors"]) or None
             state = "degraded" if error else "watching"
@@ -421,6 +443,10 @@ class CareerHandler(BaseHTTPRequestHandler):
                 self._json(self.server.runner.start_login(), 202)
             elif parsed.path == "/api/jobs/scan":
                 self._json(self.server.watcher.trigger(), 202)
+            elif parsed.path == "/api/sources/recommended":
+                self._json(self._install_recommended_sources(), 202)
+            elif parsed.path.startswith("/api/connections/"):
+                self._json(self._save_connection(parsed.path.rsplit("/", 1)[-1], body))
             elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/status"):
                 parts = parsed.path.strip("/").split("/")
                 status = str(body.get("status", ""))
@@ -432,6 +458,43 @@ class CareerHandler(BaseHTTPRequestHandler):
                 self._json({"error": "Not found"}, 404)
         except (ValueError, PermissionError, json.JSONDecodeError) as error:
             self._json({"error": str(error)}, 400)
+
+    def _save_connection(self, connection_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        if connection_id not in {item["id"] for item in CONNECTIONS}:
+            raise ValueError("Unknown job-board connection")
+        private_config_path = self.server.db.path.parent / "config.json"
+        config = load_config(private_config_path)
+        if connection_id == "usajobs":
+            email, api_key = str(body.get("email", "")).strip(), str(body.get("api_key", "")).strip()
+            if "@" not in email or len(email) > 320:
+                raise ValueError("Enter the email address used to request the USAJOBS API key")
+            if len(api_key) < 8 or len(api_key) > 500:
+                raise ValueError("Enter a valid USAJOBS API key")
+            sources = [source for source in config.get("job_sources", []) if source.get("provider") != "usajobs"]
+            for query in ("digital forensics", "incident response", "cybersecurity"):
+                sources.append({
+                    "provider": "usajobs", "account": query, "company": "US Federal Government",
+                    "email": email, "api_key": api_key, "date_posted": 7,
+                })
+            config["job_sources"] = sources
+        else:
+            connections = config.setdefault("connections", {})
+            connections[connection_id] = {"alerts_enabled": bool(body.get("alerts_enabled", True))}
+        save_config(config, private_config_path)
+        if connection_id == "usajobs":
+            self.server.watcher.trigger()
+        return next(item for item in connection_registry(config) if item["id"] == connection_id)
+
+    def _install_recommended_sources(self) -> dict[str, Any]:
+        private_config_path = self.server.db.path.parent / "config.json"
+        config = load_config(private_config_path)
+        sources = config.setdefault("job_sources", [])
+        existing = {(source.get("provider"), source.get("account")) for source in sources}
+        added = [dict(source) for source in RECOMMENDED_SOURCES if (source["provider"], source["account"]) not in existing]
+        sources.extend(added)
+        save_config(config, private_config_path)
+        self.server.watcher.trigger()
+        return {"added": len(added), "configured": len(sources), "scan": "started"}
 
     def _document(self, document_id: int, query: dict[str, list[str]]) -> None:
         with self.server.db.connect() as connection:

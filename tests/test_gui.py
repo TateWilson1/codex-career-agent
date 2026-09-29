@@ -68,6 +68,10 @@ class GuiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             db = Database(Path(folder) / "career.db")
             save_profile(db, PROFILE)
+            (Path(folder) / "config.json").write_text(json.dumps({"job_sources": [{
+                "provider": "usajobs", "account": "cybersecurity", "company": "Federal",
+                "email": "jordan@example.test", "api_key": "must-not-leak",
+            }]}), encoding="utf-8")
             import_jobs(db, JOBS[:1], "fixture")
             with db.connect() as connection:
                 connection.execute("UPDATE jobs SET score=70, score_json=?", (json.dumps({"freshness": "first 24 hours"}),))
@@ -78,6 +82,9 @@ class GuiTest(unittest.TestCase):
             self.assertGreaterEqual(len(payload["job_boards"]), 10)
             self.assertIn("search_runs", payload)
             self.assertEqual(payload["fresh_alerts"][0]["score"], 70)
+            self.assertEqual(payload["coverage"]["automatic_sources"], 1)
+            self.assertEqual(next(item for item in payload["connections"] if item["id"] == "usajobs")["state"], "connected")
+            self.assertNotIn("must-not-leak", json.dumps(payload))
             self.assertNotIn("approval_token", json.dumps(payload))
 
     def test_local_server_requires_session_token_for_private_data(self) -> None:
@@ -110,6 +117,32 @@ class GuiTest(unittest.TestCase):
                 self.assertEqual(response.status, 202)
                 self.assertEqual(json.loads(response.read())["state"], "scanning")
                 self.assertTrue(watcher.triggered)
+                connection.close()
+
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("POST", "/api/connections/linkedin", json.dumps({"alerts_enabled": True}), {"Content-Type": "application/json", "X-Career-Token": server.token})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["state"], "alerts_ready")
+                self.assertTrue(json.loads((root / "config.json").read_text())["connections"]["linkedin"]["alerts_enabled"])
+                connection.close()
+
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("POST", "/api/connections/usajobs", json.dumps({"email": "jordan@example.test", "api_key": "private-test-key"}), {"Content-Type": "application/json", "X-Career-Token": server.token})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["state"], "connected")
+                private_config = json.loads((root / "config.json").read_text())
+                self.assertEqual(sum(item["provider"] == "usajobs" for item in private_config["job_sources"]), 3)
+                connection.close()
+
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request("POST", "/api/sources/recommended", "{}", {"Content-Type": "application/json", "X-Career-Token": server.token})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 202)
+                self.assertEqual(json.loads(response.read())["added"], 12)
+                private_config = json.loads((root / "config.json").read_text())
+                self.assertEqual(len(private_config["job_sources"]), 15)
                 connection.close()
 
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)

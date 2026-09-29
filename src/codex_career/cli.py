@@ -13,7 +13,7 @@ from .db import Database
 from .doctor import run_doctor
 from .jobs import JOB_STATUSES, evaluate_jobs, import_jobs, read_jobs, record_search_run, scan_sources, update_status
 from .materials import approve_materials, build_materials, tailoring_packet
-from .paths import artifacts_dir, data_dir, database_path
+from .paths import artifacts_dir, config_path, data_dir, database_path, load_config
 from .profile import extract_resume_text, load_profile, onboarding_packet, preserve_resume, resume_hints, save_profile
 from .sources import adapter_names, discover, source_capability
 from .status import TRANSITIONS, transition_application
@@ -22,11 +22,6 @@ from .tracking import add_contact, add_followup, add_interview, list_records, up
 
 def read_json(path: str) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def load_config() -> dict[str, Any]:
-    path = data_dir() / "config.json"
-    return read_json(str(path)) if path.is_file() else {}
 
 
 def output(value: Any) -> None:
@@ -247,10 +242,10 @@ def main(argv: list[str] | None = None) -> int:
             payload.pop("questions_for_user", None)
             saved = save_profile(db, payload, source=args.resume.name if args.resume else "onboarding")
             resume_path = preserve_resume(args.resume, data_dir()) if args.resume else None
-            config_path = data_dir() / "config.json"
-            if not config_path.exists():
-                config_path.write_text(json.dumps({"default_tailoring_mode": "STANDARD", "target_resume_pages": 1, "job_sources": []}, indent=2) + "\n", encoding="utf-8")
-            output({"profile": saved, "original_resume": str(resume_path) if resume_path else None, "config": str(config_path)})
+            private_config_path = config_path()
+            if not private_config_path.exists():
+                private_config_path.write_text(json.dumps({"default_tailoring_mode": "STANDARD", "target_resume_pages": 1, "job_sources": []}, indent=2) + "\n", encoding="utf-8")
+            output({"profile": saved, "original_resume": str(resume_path) if resume_path else None, "config": str(private_config_path)})
         elif args.command == "onboarding-packet":
             value = onboarding_packet(args.resume)
             args.out.parent.mkdir(parents=True, exist_ok=True)
